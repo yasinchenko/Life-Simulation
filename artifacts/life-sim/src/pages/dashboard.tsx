@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetSimulationState,
@@ -221,6 +221,8 @@ const LEADERBOARD_STATS: { key: LeaderboardStat; label: string; valueLabel: stri
   { key: "socialization", label: "Общение", valueLabel: "Социал.", getValue: (a) => a.socialization.toFixed(1) },
 ];
 
+type RankChange = { direction: "up" | "down"; expiresAt: number };
+
 function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
   topAgents: TopAgentsResponse;
   running: boolean;
@@ -235,6 +237,65 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
     activeStat === "mood" ? topAgents.byMood :
     activeStat === "age" ? topAgents.byAge :
     topAgents.bySocialization;
+
+  const prevRanksRef = useRef<Map<string, Map<number, number>>>(new Map());
+  const [rankChanges, setRankChanges] = useState<Map<string, Map<number, RankChange>>>(new Map());
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setRankChanges(new Map());
+  }, [activeStat]);
+
+  useEffect(() => {
+    const key = activeStat;
+    const prevRanks = prevRanksRef.current.get(key);
+    const nowRanks = new Map(entries.map((a, i) => [a.id, i]));
+
+    if (prevRanks && prevRanks.size > 0) {
+      const changes = new Map<number, RankChange>();
+      const expiresAt = Date.now() + 3000;
+
+      entries.forEach((agent, currentRank) => {
+        const prevRank = prevRanks.get(agent.id);
+        if (prevRank !== undefined && prevRank !== currentRank) {
+          changes.set(agent.id, {
+            direction: currentRank < prevRank ? "up" : "down",
+            expiresAt,
+          });
+        }
+      });
+
+      if (changes.size > 0) {
+        setRankChanges(prev => {
+          const statMap = new Map(prev.get(key) ?? []);
+          changes.forEach((v, k) => statMap.set(k, v));
+          const next = new Map(prev);
+          next.set(key, statMap);
+          return next;
+        });
+
+        if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
+        fadeTimerRef.current = setTimeout(() => {
+          const now = Date.now();
+          setRankChanges(prev => {
+            const statMap = prev.get(key);
+            if (!statMap) return prev;
+            const nextStatMap = new Map<number, RankChange>();
+            statMap.forEach((v, k) => { if (v.expiresAt > now) nextStatMap.set(k, v); });
+            const next = new Map(prev);
+            next.set(key, nextStatMap);
+            return next;
+          });
+        }, 3100);
+      }
+    }
+
+    prevRanksRef.current.set(key, nowRanks);
+  }, [entries, activeStat]);
+
+  useEffect(() => {
+    return () => { if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current); };
+  }, []);
 
   return (
     <div className="bg-card border border-card-border rounded p-4">
@@ -269,25 +330,47 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
         <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60">{statConfig.valueLabel}</span>
       </div>
       <ol className="space-y-1">
-        {entries.map((agent, i) => (
-          <li key={agent.id}>
-            <button
-              onClick={() => onRowClick(agent.id)}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 transition-colors text-left group"
-            >
-              <span
-                className="w-4 text-center text-[10px] font-bold shrink-0"
-                style={{ color: i < 3 ? medalColors[i] : "hsl(210,10%,50%)" }}
+        {entries.map((agent, i) => {
+          const statMap = rankChanges.get(activeStat);
+          const change = statMap?.get(agent.id);
+          const isExpired = change && change.expiresAt <= Date.now();
+          const activeChange = change && !isExpired ? change : null;
+          return (
+            <li key={agent.id}>
+              <button
+                onClick={() => onRowClick(agent.id)}
+                className={cn(
+                  "w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 transition-colors text-left group",
+                  activeChange?.direction === "up" && "animate-rank-up",
+                  activeChange?.direction === "down" && "animate-rank-down",
+                )}
               >
-                {i + 1}
-              </span>
-              <span className="flex-1 text-xs text-foreground group-hover:text-primary truncate">
-                {agent.name}
-              </span>
-              <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{statConfig.getValue(agent)}</span>
-            </button>
-          </li>
-        ))}
+                <span
+                  className="w-4 text-center text-[10px] font-bold shrink-0"
+                  style={{ color: i < 3 ? medalColors[i] : "hsl(210,10%,50%)" }}
+                >
+                  {i + 1}
+                </span>
+                <span className="flex-1 text-xs text-foreground group-hover:text-primary truncate">
+                  {agent.name}
+                </span>
+                {activeChange && (
+                  <span
+                    className={cn(
+                      "text-[10px] font-bold shrink-0 animate-rank-arrow",
+                      activeChange.direction === "up"
+                        ? "text-[hsl(173,80%,40%)]"
+                        : "text-[hsl(348,83%,47%)]"
+                    )}
+                  >
+                    {activeChange.direction === "up" ? "↑" : "↓"}
+                  </span>
+                )}
+                <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{statConfig.getValue(agent)}</span>
+              </button>
+            </li>
+          );
+        })}
       </ol>
     </div>
   );

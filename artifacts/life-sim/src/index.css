@@ -64,6 +64,28 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  --animate-rank-up: rank-up 3s ease-out forwards;
+  --animate-rank-down: rank-down 3s ease-out forwards;
+  --animate-rank-arrow: rank-arrow 3s ease-out forwards;
+}
+
+@keyframes rank-up {
+  0%   { background-color: hsl(173 80% 40% / 0.25); }
+  20%  { background-color: hsl(173 80% 40% / 0.18); }
+  100% { background-color: transparent; }
+}
+
+@keyframes rank-down {
+  0%   { background-color: hsl(348 83% 47% / 0.25); }
+  20%  { background-color: hsl(348 83% 47% / 0.18); }
+  100% { background-color: transparent; }
+}
+
+@keyframes rank-arrow {
+  0%   { opacity: 1; }
+  60%  { opacity: 0.8; }
+  100% { opacity: 0; }
 }
 
 :root {
