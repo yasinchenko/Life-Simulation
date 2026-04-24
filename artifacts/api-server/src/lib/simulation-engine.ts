@@ -518,6 +518,11 @@ class SimulationEngine {
       const agent = this.agents.get(agentId);
       if (!agent) continue;
 
+      // Age progression: advance by 1 year on each new game day (every 24 ticks)
+      if (this.state.gameHour === 0) {
+        agent.age++;
+      }
+
       // Retirement: agents at or above 65 who aren't yet retired
       if (!agent.isRetired && agent.age >= 65) {
         if (agent.employerId != null) {
@@ -725,6 +730,7 @@ class SimulationEngine {
       for (const agent of batch) {
         await db.update(agentsTable)
           .set({
+            age: agent.age,
             mood: agent.mood,
             money: agent.money,
             currentAction: agent.currentAction,
