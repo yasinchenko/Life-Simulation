@@ -471,6 +471,12 @@ components:
           type: integer
         ownerId:
           type: ["integer", "null"]
+        firedThisTick:
+          type: integer
+          description: Number of employees fired during the last simulation tick
+        hiredThisTick:
+          type: integer
+          description: Number of employees hired during the last simulation tick
       required:
         - id
         - name
@@ -478,6 +484,8 @@ components:
         - balance
         - productionRate
         - employeeCount
+        - firedThisTick
+        - hiredThisTick
 
     Good:
       type: object

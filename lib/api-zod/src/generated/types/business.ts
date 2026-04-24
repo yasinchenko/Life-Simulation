@@ -15,4 +15,6 @@ export interface Business {
   employeeCount: number;
   /** @nullable */
   ownerId?: number | null;
+  firedThisTick: number;
+  hiredThisTick: number;
 }

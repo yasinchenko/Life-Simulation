@@ -63,6 +63,8 @@ interface AgentState extends Agent {
 
 interface BusinessState extends Business {
   employeeCount: number;
+  firedThisTick: number;
+  hiredThisTick: number;
 }
 
 interface GoodState extends Good {}
@@ -260,7 +262,7 @@ class SimulationEngine {
       }
     }
     for (const b of rows) {
-      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, firedThisTick: 0, hiredThisTick: 0 });
     }
   }
 
@@ -301,7 +303,7 @@ class SimulationEngine {
 
     const savedBusinesses = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBusinesses) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
     }
 
     const foodBusinessIds = savedBusinesses.filter(b => b.type === "food").map(b => b.id);
@@ -510,6 +512,11 @@ class SimulationEngine {
     this.state.gameHour = (this.state.gameHour + 1) % 24;
     if (this.state.gameHour === 0) this.state.gameDay++;
 
+    for (const biz of this.businesses.values()) {
+      biz.firedThisTick = 0;
+      biz.hiredThisTick = 0;
+    }
+
     const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength, pensionRate } = this.config;
 
     let gdp = 0;
@@ -557,6 +564,7 @@ class SimulationEngine {
         const employer = this.businesses.get(agent.employerId);
         if (employer && employer.balance < 0 && Math.random() < 0.5) {
           employer.employeeCount = Math.max(0, employer.employeeCount - 1);
+          employer.firedThisTick++;
           agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: agent.employerId, businessName: employer.name }];
           agent.employerId = null;
         }
@@ -569,6 +577,7 @@ class SimulationEngine {
         if (newBiz) {
           agent.employerId = newBizId;
           newBiz.employeeCount++;
+          newBiz.hiredThisTick++;
           agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBizId, businessName: newBiz.name }];
         }
       }
@@ -945,6 +954,8 @@ class SimulationEngine {
       productionRate: b.productionRate,
       employeeCount: b.employeeCount,
       ownerId: b.ownerId,
+      firedThisTick: b.firedThisTick,
+      hiredThisTick: b.hiredThisTick,
     }));
   }
 
