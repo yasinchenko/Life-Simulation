@@ -34,6 +34,8 @@ type LeaderboardSize = typeof LEADERBOARD_SIZES[number];
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const [leaderboardSize, setLeaderboardSize] = useState<LeaderboardSize>(10);
+  const [tickFlash, setTickFlash] = useState(false);
+  const prevTickRef = useRef<number | undefined>(undefined);
 
   const { data: state, isLoading } = useGetSimulationState({
     query: {
@@ -64,6 +66,19 @@ export default function Dashboard() {
       refetchInterval: running ? 7000 : 30000,
     },
   });
+
+  useEffect(() => {
+    const currentTick = state?.tick;
+    if (currentTick !== undefined && prevTickRef.current !== undefined && prevTickRef.current !== currentTick) {
+      setTickFlash(true);
+      const t = setTimeout(() => setTickFlash(false), 700);
+      prevTickRef.current = currentTick;
+      return () => clearTimeout(t);
+    }
+    if (currentTick !== undefined) {
+      prevTickRef.current = currentTick;
+    }
+  }, [state?.tick]);
 
   const chartData = history?.map(h => ({
     tick: h.tick,
@@ -96,7 +111,14 @@ export default function Dashboard() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-base font-semibold text-foreground">Дашборд симуляции</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
+          <p className={cn(
+            "text-xs mt-0.5 flex items-center gap-1.5 transition-colors duration-300",
+            tickFlash ? "text-[hsl(173,80%,40%)]" : "text-muted-foreground"
+          )}>
+            <span className={cn(
+              "w-1.5 h-1.5 rounded-full shrink-0 transition-all duration-150",
+              tickFlash ? "bg-[hsl(173,80%,40%)] scale-125 shadow-[0_0_6px_hsl(173,80%,40%)]" : "bg-muted-foreground/30"
+            )} />
             {isLoading ? "Загрузка..." : `Тик #${state?.tick ?? 0} · ${formatGameTime()}`}
           </p>
         </div>

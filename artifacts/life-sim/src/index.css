@@ -88,6 +88,28 @@
   100% { opacity: 0; }
 }
 
+@keyframes stat-card-glow {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.stat-card-flash::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  border: 1px solid var(--stat-glow-color, hsl(173 80% 40%));
+  box-shadow: 0 0 12px 2px var(--stat-glow-color, hsl(173 80% 40% / 0.4));
+  animation: stat-card-glow 0.7s ease-out forwards;
+}
+
+@keyframes tick-badge-flash {
+  0%   { color: hsl(173 80% 40%); }
+  100% { color: inherit; }
+}
+
 :root {
   --button-outline: rgba(0,0,0, .10);
   --badge-outline: rgba(0,0,0, .05);

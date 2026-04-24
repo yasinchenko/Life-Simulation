@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { type LucideIcon } from "lucide-react";
 
@@ -26,6 +27,14 @@ const accentStrokeMap: Record<string, string> = {
   crimson: "hsl(348,83%,47%)",
   blue: "hsl(210,100%,50%)",
   purple: "hsl(280,80%,60%)",
+};
+
+const accentGlowMap: Record<string, string> = {
+  teal: "hsl(173 80% 40% / 0.6)",
+  amber: "hsl(43 100% 50% / 0.6)",
+  crimson: "hsl(348 83% 47% / 0.6)",
+  blue: "hsl(210 100% 50% / 0.6)",
+  purple: "hsl(280 80% 60% / 0.6)",
 };
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
@@ -70,9 +79,27 @@ export default function StatCard({
   running,
 }: StatCardProps) {
   const showSparkline = running && sparklineData && sparklineData.length >= 2;
+  const prevValue = useRef<string | number | undefined>(undefined);
+  const [flashKey, setFlashKey] = useState(0);
+
+  useEffect(() => {
+    if (prevValue.current !== undefined && prevValue.current !== value) {
+      setFlashKey(k => k + 1);
+    }
+    prevValue.current = value;
+  }, [value]);
 
   return (
-    <div className={cn("bg-card border border-card-border rounded p-4 flex flex-col gap-1", className)}>
+    <div
+      className={cn("relative bg-card border border-card-border rounded p-4 flex flex-col gap-1", className)}
+    >
+      {flashKey > 0 && (
+        <span
+          key={flashKey}
+          className="stat-card-flash"
+          style={{ "--stat-glow-color": accentGlowMap[accent] } as React.CSSProperties}
+        />
+      )}
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">{label}</span>
         {Icon && <Icon className={cn("w-3.5 h-3.5", accentMap[accent])} />}
