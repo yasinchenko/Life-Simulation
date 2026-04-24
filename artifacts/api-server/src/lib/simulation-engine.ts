@@ -14,7 +14,7 @@ import {
   type Business,
   type Good,
 } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { logger } from "./logger";
 
 export interface SimulationConfig {
@@ -574,10 +574,15 @@ class SimulationEngine {
 
     const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength, pensionRate } = this.config;
 
+    const isNewDay = this.state.gameHour === 0;
+    const dailyDeaths: number[] = [];
+    const plannedBirths = isNewDay ? Math.max(1, Math.round(this.agents.size * 0.004)) : 0;
+
     let gdp = 0;
     let taxRevenue = 0;
     let subsidiesPaid = 0;
     let pensionPaid = 0;
+    let runningBudget = this.state.governmentBudget;
 
     const agentIds = Array.from(this.agents.keys());
 
@@ -589,29 +594,41 @@ class SimulationEngine {
       const agent = this.agents.get(agentId);
       if (!agent) continue;
 
-      // Age progression: advance by 1 year on each new game day (every 24 ticks)
-      if (this.state.gameHour === 0) {
+      // Age progression + retirement + death: once per game day
+      if (isNewDay) {
         agent.age++;
-      }
 
-      // Retirement: agents at or above 65 who aren't yet retired
-      if (!agent.isRetired && agent.age >= 65) {
-        if (agent.employerId != null) {
-          const oldBiz = this.businesses.get(agent.employerId);
-          if (oldBiz) oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
-          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null }];
-          agent.employerId = null;
-        } else {
-          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
+        // Retirement: agents at or above 65 who aren't yet retired
+        if (!agent.isRetired && agent.age >= 65) {
+          if (agent.employerId != null) {
+            const oldBiz = this.businesses.get(agent.employerId);
+            if (oldBiz) oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null }];
+            agent.employerId = null;
+          } else {
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
+          }
+          agent.isRetired = true;
         }
-        agent.isRetired = true;
+
+        // Death: retired agents have an age-based daily mortality chance
+        if (agent.isRetired) {
+          const deathChance = Math.min((agent.age - 64) * 0.005, 0.5);
+          if (Math.random() < deathChance) {
+            dailyDeaths.push(agentId);
+            continue; // skip all further processing for this agent
+          }
+        }
       }
 
-      // Pension: retired agents receive a fixed pension each tick, funded by government
+      // Pension: only if government budget allows
       if (agent.isRetired) {
         const pensionAmount = baseSalary * pensionRate;
-        agent.money += pensionAmount;
-        pensionPaid += pensionAmount;
+        if (runningBudget >= pensionAmount) {
+          agent.money += pensionAmount;
+          pensionPaid += pensionAmount;
+          runningBudget -= pensionAmount;
+        }
       }
 
       // Firing: if employer's balance is below zero, fire this agent (50% chance to spread out firings)
@@ -665,6 +682,7 @@ class SimulationEngine {
             income = salary - tax;
             agent.money += income;
             taxRevenue += tax;
+            runningBudget += tax;
             gdp += salary;
             const biz = this.businesses.get(agent.employerId);
             if (biz) biz.balance -= salary;
@@ -703,6 +721,7 @@ class SimulationEngine {
           income = salary - tax;
           agent.money += income;
           taxRevenue += tax;
+          runningBudget += tax;
           gdp += salary;
           const biz = this.businesses.get(agent.employerId);
           if (biz) biz.balance -= salary;
@@ -719,9 +738,11 @@ class SimulationEngine {
           (agent.needs.social - 50) * 0.005
       );
 
-      if (agent.money <= 0) {
+      // Subsidy: only if government budget allows
+      if (agent.money <= 0 && runningBudget >= subsidyAmount) {
         agent.money += subsidyAmount;
         subsidiesPaid += subsidyAmount;
+        runningBudget -= subsidyAmount;
       }
 
       // Track recent actions (keep last 10)
@@ -729,10 +750,38 @@ class SimulationEngine {
       if (agent.recentActions.length > 10) agent.recentActions.shift();
     }
 
-    this.state.governmentBudget += taxRevenue - subsidiesPaid - pensionPaid;
+    // Budget is already tracked via runningBudget throughout the tick
+    this.state.governmentBudget = runningBudget;
     this.state.totalTaxCollected += taxRevenue;
     this.state.totalSubsidiesPaid += subsidiesPaid;
     this.state.totalPensionPaid += pensionPaid;
+
+    // Process daily lifecycle: remove dead agents, spawn newborns
+    if (isNewDay) {
+      if (dailyDeaths.length > 0) {
+        for (const deadId of dailyDeaths) {
+          const deadAgent = this.agents.get(deadId);
+          if (!deadAgent) continue;
+          // Employer headcount
+          if (deadAgent.employerId) {
+            const biz = this.businesses.get(deadAgent.employerId);
+            if (biz) biz.employeeCount = Math.max(0, biz.employeeCount - 1);
+          }
+          // Remove from memory
+          this.agents.delete(deadId);
+          this.relations.delete(deadId);
+          for (const relMap of this.relations.values()) relMap.delete(deadId);
+          this.dirtyRelations.delete(`${deadId}:`);
+        }
+        await this.purgeDeadAgents(dailyDeaths);
+        logger.info({ count: dailyDeaths.length, population: this.agents.size }, "Agents died");
+      }
+
+      if (plannedBirths > 0) {
+        await this.spawnNewAgents(plannedBirths);
+        logger.info({ count: plannedBirths, population: this.agents.size }, "New agents born");
+      }
+    }
 
     this.updateGoodPrices();
     this.updateBusinesses();
@@ -744,6 +793,82 @@ class SimulationEngine {
     if (this.syncCounter >= 1) {
       this.syncCounter = 0;
       await this.syncToDB(gdp);
+    }
+  }
+
+  private async purgeDeadAgents(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    await db.delete(agentStatHistoryTable).where(inArray(agentStatHistoryTable.agentId, ids));
+    await db.delete(needsTable).where(inArray(needsTable.agentId, ids));
+    await db.delete(relationsTable).where(
+      or(inArray(relationsTable.agentIdA, ids), inArray(relationsTable.agentIdB, ids))
+    );
+    await db.delete(agentsTable).where(inArray(agentsTable.id, ids));
+    // Clean up persisted relation keys
+    for (const id of ids) {
+      for (const key of Array.from(this.persistedRelations)) {
+        if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) {
+          this.persistedRelations.delete(key);
+        }
+      }
+    }
+  }
+
+  private async spawnNewAgents(count: number): Promise<void> {
+    if (count <= 0) return;
+    const availableBusinessIds = Array.from(this.businesses.values())
+      .filter(b => b.balance > 0)
+      .map(b => b.id);
+
+    const newAgentData = [];
+    for (let i = 0; i < count; i++) {
+      const gender = Math.random() < 0.5 ? "male" : "female";
+      const name = gender === "male" ? pick(MALE_NAMES) : pick(FEMALE_NAMES);
+      const employerId = availableBusinessIds.length > 0 && Math.random() < 0.5
+        ? pick(availableBusinessIds) : null;
+      newAgentData.push({
+        name, gender,
+        age: randInt(18, 25),
+        mood: rand(50, 80),
+        money: rand(20, 100),
+        personality: pick(PERSONALITIES),
+        socialization: rand(30, 70),
+        currentAction: "idle" as const,
+        employerId,
+        locationX: rand(0, 1000),
+        locationY: rand(0, 1000),
+      });
+    }
+
+    const saved = await db.insert(agentsTable).values(newAgentData).returning();
+    if (saved.length === 0) return;
+
+    const needsInserts = saved.map(a => ({
+      agentId: a.id,
+      hunger: rand(60, 90),
+      comfort: rand(60, 90),
+      social: rand(60, 90),
+    }));
+    const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
+    const needsMap = new Map<number, typeof savedNeeds[0]>();
+    for (const n of savedNeeds) needsMap.set(n.agentId, n);
+
+    for (const agent of saved) {
+      const needs = needsMap.get(agent.id);
+      if (!needs) continue;
+      this.agents.set(agent.id, {
+        ...agent,
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social },
+        needsId: needs.id,
+        recentActions: [],
+        jobHistory: agent.employerId
+          ? [{ tick: this.state.tick, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }]
+          : [],
+      });
+      if (agent.employerId) {
+        const biz = this.businesses.get(agent.employerId);
+        if (biz) biz.employeeCount++;
+      }
     }
   }
 
