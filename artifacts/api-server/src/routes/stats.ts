@@ -1,0 +1,40 @@
+import { Router, type IRouter } from "express";
+import { db } from "@workspace/db";
+import { statsHistoryTable } from "@workspace/db";
+import { desc } from "drizzle-orm";
+import { simulationEngine } from "../lib/simulation-engine";
+import {
+  GetStatsHistoryQueryParams,
+  GetStatsHistoryResponse,
+  GetStatsSummaryResponse,
+  GetTopAgentsResponse,
+} from "@workspace/api-zod";
+
+const router: IRouter = Router();
+
+router.get("/stats/history", async (req, res): Promise<void> => {
+  const parsed = GetStatsHistoryQueryParams.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const limit = parsed.data.limit ?? 50;
+  const rows = await db
+    .select()
+    .from(statsHistoryTable)
+    .orderBy(desc(statsHistoryTable.tick))
+    .limit(limit);
+  res.json(GetStatsHistoryResponse.parse(rows.reverse()));
+});
+
+router.get("/stats/summary", (_req, res): void => {
+  const summary = simulationEngine.getStatsSummary();
+  res.json(GetStatsSummaryResponse.parse(summary));
+});
+
+router.get("/stats/top-agents", (_req, res): void => {
+  const top = simulationEngine.getTopAgents();
+  res.json(GetTopAgentsResponse.parse(top));
+});
+
+export default router;
