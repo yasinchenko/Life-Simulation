@@ -8,12 +8,13 @@ import {
   simStateTable,
   simConfigTable,
   statsHistoryTable,
+  agentStatHistoryTable,
   type Agent,
   type Needs,
   type Business,
   type Good,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { logger } from "./logger";
 
 export interface SimulationConfig {
@@ -157,6 +158,7 @@ class SimulationEngine {
     await this.loadBusinesses();
     await this.loadGoods();
     await this.loadRelations();
+    await this.loadAgentStatHistory();
 
     if (this.agents.size === 0) {
       logger.info("No agents found, generating initial population...");
@@ -262,6 +264,45 @@ class SimulationEngine {
       relMap.set(r.agentIdB, r.friendshipLevel);
       this.persistedRelations.add(`${r.agentIdA}:${r.agentIdB}`);
     }
+  }
+
+  private async loadAgentStatHistory(): Promise<void> {
+    this.agentStatHistory.clear();
+    const rows = await db.execute(sql`
+      SELECT agent_id, tick, money, mood, age, socialization
+      FROM (
+        SELECT agent_id, tick, money, mood, age, socialization,
+               ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY tick DESC) AS rn
+        FROM agent_stat_history
+      ) ranked
+      WHERE rn <= ${AGENT_STAT_HISTORY_MAX}
+      ORDER BY agent_id, tick ASC
+    `);
+    for (const row of rows.rows) {
+      const agentId = Number(row.agent_id);
+      const snapshot: AgentStatSnapshot = {
+        tick: Number(row.tick),
+        money: Number(row.money),
+        mood: Number(row.mood),
+        age: Number(row.age),
+        socialization: Number(row.socialization),
+      };
+      const history = this.agentStatHistory.get(agentId) ?? [];
+      history.push(snapshot);
+      this.agentStatHistory.set(agentId, history);
+    }
+    logger.info({ agentCount: this.agentStatHistory.size }, "Loaded agent stat history from DB");
+
+    await db.execute(sql`
+      DELETE FROM agent_stat_history
+      WHERE id NOT IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY tick DESC) AS rn
+          FROM agent_stat_history
+        ) ranked
+        WHERE rn <= ${AGENT_STAT_HISTORY_MAX}
+      )
+    `);
   }
 
   private async loadBusinesses(): Promise<void> {
@@ -461,6 +502,7 @@ class SimulationEngine {
     logger.info("Resetting simulation...");
 
     await db.delete(statsHistoryTable);
+    await db.delete(agentStatHistoryTable);
     await db.delete(relationsTable);
     await db.delete(needsTable);
     await db.delete(agentsTable);
@@ -473,6 +515,7 @@ class SimulationEngine {
     this.relations.clear();
     this.dirtyRelations.clear();
     this.persistedRelations.clear();
+    this.agentStatHistory.clear();
 
     this.state = {
       tick: 0,
@@ -834,6 +877,7 @@ class SimulationEngine {
     });
 
     const currentTick = this.state.tick;
+    const dbRows: { agentId: number; tick: number; money: number; mood: number; age: number; socialization: number }[] = [];
     for (const agent of this.agents.values()) {
       const snapshot: AgentStatSnapshot = {
         tick: currentTick,
@@ -846,6 +890,10 @@ class SimulationEngine {
       history.push(snapshot);
       if (history.length > AGENT_STAT_HISTORY_MAX) history.shift();
       this.agentStatHistory.set(agent.id, history);
+      dbRows.push({ agentId: agent.id, tick: currentTick, money: snapshot.money, mood: snapshot.mood, age: snapshot.age, socialization: snapshot.socialization });
+    }
+    if (dbRows.length > 0) {
+      await db.insert(agentStatHistoryTable).values(dbRows);
     }
   }
 

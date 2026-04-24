@@ -35,12 +35,27 @@ export const statsHistoryTable = pgTable("stats_history", {
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const agentStatHistoryTable = pgTable("agent_stat_history", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull(),
+  tick: integer("tick").notNull(),
+  money: real("money").notNull(),
+  mood: real("mood").notNull(),
+  age: integer("age").notNull(),
+  socialization: real("socialization").notNull(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type SimState = typeof simStateTable.$inferSelect;
 export type SimConfig = typeof simConfigTable.$inferSelect;
 export type StatsHistory = typeof statsHistoryTable.$inferSelect;
+export type AgentStatHistory = typeof agentStatHistoryTable.$inferSelect;
 
 export const insertSimConfigSchema = createInsertSchema(simConfigTable).omit({ id: true });
 export type InsertSimConfig = z.infer<typeof insertSimConfigSchema>;
 
 export const insertStatsHistorySchema = createInsertSchema(statsHistoryTable).omit({ id: true, recordedAt: true });
 export type InsertStatsHistory = z.infer<typeof insertStatsHistorySchema>;
+
+export const insertAgentStatHistorySchema = createInsertSchema(agentStatHistoryTable).omit({ id: true, recordedAt: true });
+export type InsertAgentStatHistory = z.infer<typeof insertAgentStatHistorySchema>;
