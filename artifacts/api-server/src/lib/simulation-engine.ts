@@ -13,7 +13,7 @@ import {
   type Business,
   type Good,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { logger } from "./logger";
 
 export interface SimulationConfig {
@@ -107,6 +107,8 @@ class SimulationEngine {
   /** agentIdA → Map<agentIdB, friendshipLevel> */
   private relations: Map<number, Map<number, number>> = new Map();
   private dirtyRelations: Set<string> = new Set();
+  /** Tracks "agentIdA:agentIdB" pairs that already have a DB row (safe to UPDATE) */
+  private persistedRelations: Set<string> = new Set();
   private state: SimState = {
     tick: 0,
     running: false,
@@ -218,6 +220,7 @@ class SimulationEngine {
     const rows = await db.select().from(relationsTable);
     this.relations.clear();
     this.dirtyRelations.clear();
+    this.persistedRelations.clear();
     for (const r of rows) {
       let relMap = this.relations.get(r.agentIdA);
       if (!relMap) {
@@ -225,6 +228,7 @@ class SimulationEngine {
         this.relations.set(r.agentIdA, relMap);
       }
       relMap.set(r.agentIdB, r.friendshipLevel);
+      this.persistedRelations.add(`${r.agentIdA}:${r.agentIdB}`);
     }
   }
 
@@ -427,6 +431,7 @@ class SimulationEngine {
     this.goods.clear();
     this.relations.clear();
     this.dirtyRelations.clear();
+    this.persistedRelations.clear();
 
     this.state = {
       tick: 0,
@@ -671,9 +676,17 @@ class SimulationEngine {
       const agentIdB = parseInt(bStr, 10);
       const level = this.relations.get(agentIdA)?.get(agentIdB);
       if (level !== undefined) {
-        await db.update(relationsTable)
-          .set({ friendshipLevel: level })
-          .where(eq(relationsTable.agentIdA, agentIdA));
+        if (this.persistedRelations.has(key)) {
+          await db.update(relationsTable)
+            .set({ friendshipLevel: level })
+            .where(and(
+              eq(relationsTable.agentIdA, agentIdA),
+              eq(relationsTable.agentIdB, agentIdB),
+            ));
+        } else {
+          await db.insert(relationsTable).values({ agentIdA, agentIdB, friendshipLevel: level });
+          this.persistedRelations.add(key);
+        }
       }
       this.dirtyRelations.delete(key);
     }
