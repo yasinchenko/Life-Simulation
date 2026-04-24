@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetSimulationState,
@@ -13,11 +13,20 @@ import {
   type TopAgentsResponse,
 } from "@workspace/api-client-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+
 import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Settings } from "lucide-react";
 import StatCard from "@/components/stat-card";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { useLocation } from "wouter";
+
+interface AgentStatSnapshot {
+  tick: number;
+  money: number;
+  mood: number;
+  age: number;
+  socialization: number;
+}
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
@@ -214,14 +223,83 @@ function ChartCard({ title, data, dataKey, color, domain, running }: {
 
 type LeaderboardStat = "wealth" | "mood" | "age" | "socialization";
 
-const LEADERBOARD_STATS: { key: LeaderboardStat; label: string; valueLabel: string; getValue: (a: Agent) => string }[] = [
-  { key: "wealth", label: "Богатство", valueLabel: "Средства", getValue: (a) => Math.round(a.money).toLocaleString() },
-  { key: "mood", label: "Настроение", valueLabel: "Настр.", getValue: (a) => a.mood.toFixed(1) },
-  { key: "age", label: "Возраст", valueLabel: "Лет", getValue: (a) => String(a.age) },
-  { key: "socialization", label: "Общение", valueLabel: "Социал.", getValue: (a) => a.socialization.toFixed(1) },
+const LEADERBOARD_STATS: { key: LeaderboardStat; label: string; valueLabel: string; getValue: (a: Agent) => string; historyKey: keyof AgentStatSnapshot; color: string }[] = [
+  { key: "wealth", label: "Богатство", valueLabel: "Средства", getValue: (a) => Math.round(a.money).toLocaleString(), historyKey: "money", color: "hsl(173,80%,40%)" },
+  { key: "mood", label: "Настроение", valueLabel: "Настр.", getValue: (a) => a.mood.toFixed(1), historyKey: "mood", color: "hsl(43,100%,50%)" },
+  { key: "age", label: "Возраст", valueLabel: "Лет", getValue: (a) => String(a.age), historyKey: "age", color: "hsl(210,100%,60%)" },
+  { key: "socialization", label: "Общение", valueLabel: "Социал.", getValue: (a) => a.socialization.toFixed(1), historyKey: "socialization", color: "hsl(280,80%,65%)" },
 ];
 
 type RankChange = { direction: "up" | "down"; expiresAt: number };
+
+function SparklineTooltip({ history, statKey, color, agentName }: {
+  history: AgentStatSnapshot[];
+  statKey: keyof AgentStatSnapshot;
+  color: string;
+  agentName: string;
+}) {
+  if (history.length < 2) {
+    return (
+      <div className="text-[10px] text-muted-foreground px-1">
+        Недостаточно данных
+      </div>
+    );
+  }
+
+  const values = history.map(h => h[statKey] as number);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const W = 140;
+  const H = 48;
+  const pad = 4;
+  const innerW = W - pad * 2;
+  const innerH = H - pad * 2;
+
+  const points = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * innerW;
+    const y = pad + (1 - (v - min) / range) * innerH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  const lastVal = values[values.length - 1];
+  const firstVal = values[0];
+  const trend = lastVal - firstVal;
+
+  return (
+    <div>
+      <p className="text-[10px] font-medium text-foreground mb-1.5 truncate max-w-[140px]">{agentName}</p>
+      <svg width={W} height={H} className="block">
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {values.map((v, i) => {
+          if (i !== values.length - 1) return null;
+          const x = pad + (i / (values.length - 1)) * innerW;
+          const y = pad + (1 - (v - min) / range) * innerH;
+          return <circle key={i} cx={x} cy={y} r={2.5} fill={color} />;
+        })}
+      </svg>
+      <div className="flex items-center justify-between mt-1">
+        <span className="text-[9px] text-muted-foreground">
+          {typeof firstVal === "number" ? (Number.isInteger(firstVal) ? firstVal.toLocaleString() : firstVal.toFixed(1)) : firstVal}
+        </span>
+        <span className={cn("text-[9px] font-semibold", trend >= 0 ? "text-[hsl(173,80%,40%)]" : "text-[hsl(348,83%,47%)]")}>
+          {trend >= 0 ? "+" : ""}{typeof trend === "number" ? (Number.isInteger(trend) ? Math.round(trend).toLocaleString() : trend.toFixed(1)) : trend}
+        </span>
+        <span className="text-[9px] text-muted-foreground">
+          {typeof lastVal === "number" ? (Number.isInteger(lastVal) ? lastVal.toLocaleString() : lastVal.toFixed(1)) : lastVal}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
   topAgents: TopAgentsResponse;
@@ -241,6 +319,39 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
   const prevRanksRef = useRef<Map<string, Map<number, number>>>(new Map());
   const [rankChanges, setRankChanges] = useState<Map<string, Map<number, RankChange>>>(new Map());
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [hoveredAgentId, setHoveredAgentId] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [agentHistory, setAgentHistory] = useState<Map<number, AgentStatSnapshot[]>>(new Map());
+  const fetchingRef = useRef<Set<number>>(new Set());
+
+  const fetchHistory = useCallback(async (id: number) => {
+    if (fetchingRef.current.has(id)) return;
+    fetchingRef.current.add(id);
+    try {
+      const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+      const res = await fetch(`${base}/api/agents/${id}/stat-history`);
+      if (res.ok) {
+        const data: AgentStatSnapshot[] = await res.json();
+        setAgentHistory(prev => new Map(prev).set(id, data));
+      }
+    } catch {
+    } finally {
+      fetchingRef.current.delete(id);
+    }
+  }, []);
+
+  const handleRowMouseEnter = useCallback((agent: Agent, e: React.MouseEvent) => {
+    setHoveredAgentId(agent.id);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setTooltipPos({ x: rect.right + 8, y: rect.top });
+    fetchHistory(agent.id);
+  }, [fetchHistory]);
+
+  const handleRowMouseLeave = useCallback(() => {
+    setHoveredAgentId(null);
+    setTooltipPos(null);
+  }, []);
 
   useEffect(() => {
     setRankChanges(new Map());
@@ -297,8 +408,11 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
     return () => { if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current); };
   }, []);
 
+  const hoveredHistory = hoveredAgentId != null ? agentHistory.get(hoveredAgentId) : undefined;
+  const hoveredAgent = hoveredAgentId != null ? entries.find(a => a.id === hoveredAgentId) : undefined;
+
   return (
-    <div className="bg-card border border-card-border rounded p-4">
+    <div className="bg-card border border-card-border rounded p-4 relative">
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <Trophy className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Лидеры</h3>
@@ -339,6 +453,8 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
             <li key={agent.id}>
               <button
                 onClick={() => onRowClick(agent.id)}
+                onMouseEnter={(e) => handleRowMouseEnter(agent, e)}
+                onMouseLeave={handleRowMouseLeave}
                 className={cn(
                   "w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 transition-colors text-left group",
                   activeChange?.direction === "up" && "animate-rank-up",
@@ -372,6 +488,30 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
           );
         })}
       </ol>
+
+      {hoveredAgentId != null && tooltipPos && (
+        <div
+          className="fixed z-50 bg-card border border-card-border rounded p-3 shadow-lg pointer-events-none"
+          style={{
+            left: Math.min(tooltipPos.x, window.innerWidth - 180),
+            top: Math.max(8, tooltipPos.y - 20),
+          }}
+        >
+          {hoveredHistory && hoveredHistory.length >= 2 ? (
+            <SparklineTooltip
+              history={hoveredHistory}
+              statKey={statConfig.historyKey}
+              color={statConfig.color}
+              agentName={hoveredAgent?.name ?? ""}
+            />
+          ) : (
+            <div>
+              <p className="text-[10px] font-medium text-foreground mb-1 truncate max-w-[140px]">{hoveredAgent?.name}</p>
+              <p className="text-[10px] text-muted-foreground">История накапливается...</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

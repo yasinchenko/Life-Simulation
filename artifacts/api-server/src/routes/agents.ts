@@ -26,6 +26,17 @@ router.get("/agents", async (req, res): Promise<void> => {
   res.json(ListAgentsResponse.parse(result));
 });
 
+router.get("/agents/:id/stat-history", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid agent id" });
+    return;
+  }
+  const history = simulationEngine.getAgentStatHistory(id);
+  res.json(history);
+});
+
 router.get("/agents/:id", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);

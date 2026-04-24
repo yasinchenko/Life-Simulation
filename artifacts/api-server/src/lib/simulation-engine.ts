@@ -113,6 +113,16 @@ function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+const AGENT_STAT_HISTORY_MAX = 20;
+
+interface AgentStatSnapshot {
+  tick: number;
+  money: number;
+  mood: number;
+  age: number;
+  socialization: number;
+}
+
 class SimulationEngine {
   private agents: Map<number, AgentState> = new Map();
   private businesses: Map<number, BusinessState> = new Map();
@@ -122,6 +132,8 @@ class SimulationEngine {
   private dirtyRelations: Set<string> = new Set();
   /** Tracks "agentIdA:agentIdB" pairs that already have a DB row (safe to UPDATE) */
   private persistedRelations: Set<string> = new Set();
+  /** Per-agent stat history: last N snapshots keyed by agent id */
+  private agentStatHistory: Map<number, AgentStatSnapshot[]> = new Map();
   private state: SimState = {
     tick: 0,
     running: false,
@@ -820,6 +832,21 @@ class SimulationEngine {
       unemploymentRate,
       governmentBudget: this.state.governmentBudget,
     });
+
+    const currentTick = this.state.tick;
+    for (const agent of this.agents.values()) {
+      const snapshot: AgentStatSnapshot = {
+        tick: currentTick,
+        money: Math.round(agent.money * 100) / 100,
+        mood: Math.round(agent.mood * 10) / 10,
+        age: agent.age,
+        socialization: Math.round(agent.socialization * 10) / 10,
+      };
+      const history = this.agentStatHistory.get(agent.id) ?? [];
+      history.push(snapshot);
+      if (history.length > AGENT_STAT_HISTORY_MAX) history.shift();
+      this.agentStatHistory.set(agent.id, history);
+    }
   }
 
   private async persistState(): Promise<void> {
@@ -1048,6 +1075,10 @@ class SimulationEngine {
     const byAge = [...agents].sort((a, b) => b.age - a.age).slice(0, 10).map(mapAgent);
     const bySocialization = [...agents].sort((a, b) => b.socialization - a.socialization).slice(0, 10).map(mapAgent);
     return { byWealth, byMood, byAge, bySocialization };
+  }
+
+  getAgentStatHistory(id: number): AgentStatSnapshot[] {
+    return this.agentStatHistory.get(id) ?? [];
   }
 }
 
