@@ -119,7 +119,8 @@ class SimulationEngine {
     totalSubsidiesPaid: 0,
   };
   private config: SimulationConfig = { ...DEFAULT_CONFIG };
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private isTicking = false;
   private syncCounter = 0;
 
   async initialize(): Promise<void> {
@@ -407,8 +408,8 @@ class SimulationEngine {
   async stop(): Promise<void> {
     if (!this.state.running) return;
     this.state.running = false;
-    if (this.timer) {
-      clearInterval(this.timer);
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
       this.timer = null;
     }
     await this.persistState();
@@ -448,11 +449,28 @@ class SimulationEngine {
   }
 
   private startTimer(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => {
-      this.tick().catch(err => {
-        logger.error({ err }, "Tick error");
-      });
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.scheduleNextTick();
+  }
+
+  private scheduleNextTick(): void {
+    if (!this.state.running) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      if (this.isTicking) {
+        this.scheduleNextTick();
+        return;
+      }
+      this.isTicking = true;
+      this.tick()
+        .catch(err => { logger.error({ err }, "Tick error"); })
+        .finally(() => {
+          this.isTicking = false;
+          this.scheduleNextTick();
+        });
     }, this.config.tickIntervalMs);
   }
 
