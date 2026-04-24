@@ -6,10 +6,12 @@ import economyRouter from "./economy";
 import governmentRouter from "./government";
 import configRouter from "./config";
 import statsRouter from "./stats";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(adminRouter);
 router.use(simulationRouter);
 router.use(agentsRouter);
 router.use(economyRouter);

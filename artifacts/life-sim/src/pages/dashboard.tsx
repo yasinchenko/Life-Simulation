@@ -2,9 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetSimulationState,
   getGetSimulationStateQueryKey,
-  useStartSimulation,
-  useStopSimulation,
-  useResetSimulation,
   useGetStatsHistory,
   getGetStatsHistoryQueryKey,
   getGetStatsSummaryQueryKey,
@@ -14,14 +11,13 @@ import {
   type Agent,
 } from "@workspace/api-client-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { Play, Square, RotateCcw, Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Smile } from "lucide-react";
+import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Smile, Settings } from "lucide-react";
 import StatCard from "@/components/stat-card";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { Link } from "wouter";
 import { useLocation } from "wouter";
 
 export default function Dashboard() {
-  const qc = useQueryClient();
   const [, navigate] = useLocation();
 
   const { data: state, isLoading } = useGetSimulationState({
@@ -54,33 +50,6 @@ export default function Dashboard() {
     },
   });
 
-  const startMutation = useStartSimulation({
-    mutation: {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetSimulationStateQueryKey() });
-        toast.success("Симуляция запущена");
-      },
-    },
-  });
-
-  const stopMutation = useStopSimulation({
-    mutation: {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetSimulationStateQueryKey() });
-        toast.info("Симуляция остановлена");
-      },
-    },
-  });
-
-  const resetMutation = useResetSimulation({
-    mutation: {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetSimulationStateQueryKey() });
-        toast.success("Симуляция сброшена");
-      },
-    },
-  });
-
   const chartData = history?.map(h => ({
     tick: h.tick,
     mood: Math.round(h.avgMood * 10) / 10,
@@ -108,15 +77,15 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-base font-semibold text-foreground">Дашборд симуляции</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
             {isLoading ? "Загрузка..." : `Тик #${state?.tick ?? 0} · ${formatGameTime()}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className={cn(
             "flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border",
             running
@@ -126,43 +95,17 @@ export default function Dashboard() {
             <span className={cn("w-1.5 h-1.5 rounded-full", running ? "bg-[hsl(173,80%,40%)] animate-pulse" : "bg-[hsl(348,83%,47%)]")} />
             {running ? "РАБОТАЕТ" : "ОСТАНОВЛЕНА"}
           </div>
-
-          {!running ? (
-            <button
-              onClick={() => startMutation.mutate()}
-              disabled={startMutation.isPending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:opacity-90 disabled:opacity-50"
-            >
-              <Play className="w-3 h-3" />
-              Запустить
-            </button>
-          ) : (
-            <button
-              onClick={() => stopMutation.mutate()}
-              disabled={stopMutation.isPending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-secondary-foreground rounded text-xs font-medium hover:opacity-90 disabled:opacity-50"
-            >
-              <Square className="w-3 h-3" />
-              Остановить
-            </button>
-          )}
-
-          <button
-            onClick={() => {
-              if (confirm("Сбросить симуляцию? Все данные будут очищены.")) {
-                resetMutation.mutate();
-              }
-            }}
-            disabled={resetMutation.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-secondary-foreground rounded text-xs font-medium hover:opacity-90 disabled:opacity-50"
+          <Link
+            href="/settings"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-secondary-foreground rounded text-xs font-medium hover:opacity-90 border border-border transition-opacity"
           >
-            <RotateCcw className="w-3 h-3" />
-            Сброс
-          </button>
+            <Settings className="w-3 h-3" />
+            Управление
+          </Link>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
         <StatCard label="Население" value={state?.population?.toLocaleString() ?? "--"} icon={Users} accent="teal" sparklineData={sparklines.population} running={running} />
         <StatCard label="Ср. настроение" value={state?.avgMood?.toFixed(1) ?? "--"} sub="из 100" icon={Heart} accent="amber" sparklineData={sparklines.mood} running={running} />
         <StatCard label="ВВП (капитал)" value={state ? `${Math.round(state.gdp / 1000)}K` : "--"} icon={TrendingUp} accent="blue" sparklineData={sparklines.gdp} running={running} />
@@ -177,15 +120,15 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
             <div>
               <p className="text-muted-foreground">Богатейший</p>
-              <p className="font-medium text-foreground">{summary.richestAgent ?? "—"}</p>
+              <p className="font-medium text-foreground truncate">{summary.richestAgent ?? "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Счастливейший</p>
-              <p className="font-medium text-foreground">{summary.happiestAgent ?? "—"}</p>
+              <p className="font-medium text-foreground truncate">{summary.happiestAgent ?? "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Популярный товар</p>
-              <p className="font-medium text-foreground">{summary.mostPopularGood ?? "—"}</p>
+              <p className="font-medium text-foreground truncate">{summary.mostPopularGood ?? "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Трудоустроено</p>
