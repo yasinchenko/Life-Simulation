@@ -3,9 +3,14 @@ import { useLocation } from "wouter";
 import {
   useListAgents,
   getListAgentsQueryKey,
+  type ListAgentsQueryResult,
 } from "@workspace/api-client-react";
+
 import { ChevronUp, ChevronDown, Search } from "lucide-react";
+
 import { cn } from "@/lib/utils";
+
+type AgentItem = NonNullable<ListAgentsQueryResult>["agents"][number];
 
 type SortBy = "name" | "age" | "mood" | "money" | "currentAction";
 type SortDir = "asc" | "desc";
@@ -136,7 +141,7 @@ export default function AgentsPage() {
   );
 }
 
-function AgentRow({ agent }: { agent: any }) {
+function AgentRow({ agent }: { agent: AgentItem }) {
   const [, navigate] = useLocation();
 
   return (

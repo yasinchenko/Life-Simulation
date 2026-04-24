@@ -40,7 +40,7 @@ router.get("/agents/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const relations = await simulationEngine.getAgentRelations(id);
+  const relations = simulationEngine.getAgentRelations(id);
   res.json(GetAgentResponse.parse({ ...agent, relations }));
 });
 

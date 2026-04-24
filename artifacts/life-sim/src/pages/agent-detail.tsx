@@ -2,8 +2,10 @@ import { useParams, useLocation } from "wouter";
 import {
   useGetAgent,
   getGetAgentQueryKey,
+  type AgentDetail,
+  type AgentRelation,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, DollarSign, Briefcase } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -22,7 +24,7 @@ const ACTION_COLORS: Record<string, string> = {
   idle: "bg-muted/50 text-muted-foreground border-border",
 };
 
-function NeedsBar({ label, value, icon: Icon, color }: { label: string; value: number; icon: any; color: string }) {
+function NeedsBar({ label, value, icon: Icon, color }: { label: string; value: number; icon: LucideIcon; color: string }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
@@ -128,13 +130,36 @@ export default function AgentDetailPage() {
         </div>
       )}
 
+      {agent.recentActions && agent.recentActions.length > 0 && (
+        <div className="bg-card border border-card-border rounded p-4">
+          <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-3">
+            Последние действия
+          </h2>
+          <div className="flex flex-wrap gap-1.5">
+            {[...agent.recentActions].reverse().map((action, i) => (
+              <span
+                key={i}
+                className={cn(
+                  "px-2 py-0.5 text-[10px] rounded border",
+                  i === 0
+                    ? ACTION_COLORS[action] ?? "bg-muted/50 text-muted-foreground border-border"
+                    : "bg-muted/30 text-muted-foreground border-border/50"
+                )}
+              >
+                {ACTION_LABELS[action] ?? action}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {agent.relations && agent.relations.length > 0 && (
         <div className="bg-card border border-card-border rounded p-4">
           <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-3">
             Связи ({agent.relations.length})
           </h2>
           <div className="space-y-2">
-            {agent.relations.map((rel: any) => (
+            {agent.relations.map((rel: AgentRelation) => (
               <div key={rel.otherId} className="flex items-center justify-between text-xs py-1 border-b border-border/50 last:border-0">
                 <span className="text-foreground">{rel.otherName}</span>
                 <div className="flex items-center gap-2">

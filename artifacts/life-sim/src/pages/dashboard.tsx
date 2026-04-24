@@ -6,6 +6,7 @@ import {
   useStopSimulation,
   useResetSimulation,
   useGetStatsHistory,
+  getGetStatsHistoryQueryKey,
   getGetStatsSummaryQueryKey,
   useGetStatsSummary,
 } from "@workspace/api-client-react";
@@ -26,7 +27,7 @@ export default function Dashboard() {
   });
 
   const { data: history } = useGetStatsHistory({ limit: 60 }, {
-    query: { refetchInterval: 60000 },
+    query: { queryKey: getGetStatsHistoryQueryKey({ limit: 60 }), refetchInterval: 60000 },
   });
 
   const { data: summary } = useGetStatsSummary({
@@ -98,7 +99,7 @@ export default function Dashboard() {
 
           {!running ? (
             <button
-              onClick={() => startMutation.mutate({})}
+              onClick={() => startMutation.mutate()}
               disabled={startMutation.isPending}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:opacity-90 disabled:opacity-50"
             >
@@ -107,7 +108,7 @@ export default function Dashboard() {
             </button>
           ) : (
             <button
-              onClick={() => stopMutation.mutate({})}
+              onClick={() => stopMutation.mutate()}
               disabled={stopMutation.isPending}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-secondary-foreground rounded text-xs font-medium hover:opacity-90 disabled:opacity-50"
             >
@@ -119,7 +120,7 @@ export default function Dashboard() {
           <button
             onClick={() => {
               if (confirm("Сбросить симуляцию? Все данные будут очищены.")) {
-                resetMutation.mutate({});
+                resetMutation.mutate();
               }
             }}
             disabled={resetMutation.isPending}

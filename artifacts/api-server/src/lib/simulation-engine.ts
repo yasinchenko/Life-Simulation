@@ -13,7 +13,7 @@ import {
   type Business,
   type Good,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { logger } from "./logger";
 
 export interface SimulationConfig {
@@ -42,9 +42,13 @@ const DEFAULT_CONFIG: SimulationConfig = {
   priceMarkup: 0.2,
 };
 
+const AGENT_SORT_KEYS = ["name", "age", "mood", "money", "currentAction"] as const;
+type AgentSortKey = typeof AGENT_SORT_KEYS[number];
+
 interface AgentState extends Agent {
   needs: { hunger: number; comfort: number; social: number };
   needsId: number;
+  recentActions: string[];
 }
 
 interface BusinessState extends Business {
@@ -100,6 +104,9 @@ class SimulationEngine {
   private agents: Map<number, AgentState> = new Map();
   private businesses: Map<number, BusinessState> = new Map();
   private goods: Map<number, GoodState> = new Map();
+  /** agentIdA → Map<agentIdB, friendshipLevel> */
+  private relations: Map<number, Map<number, number>> = new Map();
+  private dirtyRelations: Set<string> = new Set();
   private state: SimState = {
     tick: 0,
     running: false,
@@ -120,6 +127,7 @@ class SimulationEngine {
     await this.loadAgents();
     await this.loadBusinesses();
     await this.loadGoods();
+    await this.loadRelations();
 
     if (this.agents.size === 0) {
       logger.info("No agents found, generating initial population...");
@@ -202,7 +210,21 @@ class SimulationEngine {
     this.agents.clear();
     for (const agent of agentRows) {
       const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, id: 0 };
-      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social }, needsId: needs.id });
+      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social }, needsId: needs.id, recentActions: [] });
+    }
+  }
+
+  private async loadRelations(): Promise<void> {
+    const rows = await db.select().from(relationsTable);
+    this.relations.clear();
+    this.dirtyRelations.clear();
+    for (const r of rows) {
+      let relMap = this.relations.get(r.agentIdA);
+      if (!relMap) {
+        relMap = new Map();
+        this.relations.set(r.agentIdA, relMap);
+      }
+      relMap.set(r.agentIdB, r.friendshipLevel);
     }
   }
 
@@ -338,6 +360,7 @@ class SimulationEngine {
           ...agent,
           needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social },
           needsId: needs.id,
+          recentActions: [],
         });
         if (agent.employerId) {
           const biz = this.businesses.get(agent.employerId);
@@ -353,14 +376,17 @@ class SimulationEngine {
       const idA = pick(allAgentIds);
       let idB = pick(allAgentIds);
       while (idB === idA) idB = pick(allAgentIds);
-      relationInserts.push({
-        agentIdA: idA,
-        agentIdB: idB,
-        friendshipLevel: rand(10, 70),
-      });
+      const level = rand(10, 70);
+      relationInserts.push({ agentIdA: idA, agentIdB: idB, friendshipLevel: level });
     }
     if (relationInserts.length > 0) {
       await db.insert(relationsTable).values(relationInserts);
+      // Load generated relations into memory
+      for (const r of relationInserts) {
+        let relMap = this.relations.get(r.agentIdA);
+        if (!relMap) { relMap = new Map(); this.relations.set(r.agentIdA, relMap); }
+        relMap.set(r.agentIdB, r.friendshipLevel);
+      }
     }
 
     logger.info({ agents: this.agents.size, businesses: this.businesses.size, goods: this.goods.size }, "Population generated");
@@ -399,6 +425,8 @@ class SimulationEngine {
     this.agents.clear();
     this.businesses.clear();
     this.goods.clear();
+    this.relations.clear();
+    this.dirtyRelations.clear();
 
     this.state = {
       tick: 0,
@@ -494,6 +522,9 @@ class SimulationEngine {
             partner.needs.social = clamp(partner.needs.social + rand(10, 30));
             agent.mood = clamp(agent.mood + interaction * socialInteractionStrength);
             partner.mood = clamp(partner.mood + interaction * socialInteractionStrength * 0.5);
+            // Update friendship levels based on quality of interaction
+            this.updateRelation(agentId, partnerId, interaction * 5);
+            this.updateRelation(partnerId, agentId, interaction * 2.5);
           }
         }
         agent.currentAction = "socialize";
@@ -524,6 +555,10 @@ class SimulationEngine {
         agent.money += subsidyAmount;
         subsidiesPaid += subsidyAmount;
       }
+
+      // Track recent actions (keep last 10)
+      agent.recentActions.push(agent.currentAction);
+      if (agent.recentActions.length > 10) agent.recentActions.shift();
     }
 
     this.state.governmentBudget += taxRevenue - subsidiesPaid;
@@ -564,6 +599,18 @@ class SimulationEngine {
     const candidates = allIds.filter(id => id !== agentId);
     if (candidates.length === 0) return null;
     return pick(candidates);
+  }
+
+  private updateRelation(agentIdA: number, agentIdB: number, delta: number): void {
+    let relMap = this.relations.get(agentIdA);
+    if (!relMap) {
+      relMap = new Map();
+      this.relations.set(agentIdA, relMap);
+    }
+    const current = relMap.get(agentIdB) ?? 50;
+    const next = clamp(current + delta);
+    relMap.set(agentIdB, next);
+    this.dirtyRelations.add(`${agentIdA}:${agentIdB}`);
   }
 
   private updateGoodPrices(): void {
@@ -614,6 +661,21 @@ class SimulationEngine {
       await db.update(businessesTable)
         .set({ balance: biz.balance })
         .where(eq(businessesTable.id, biz.id));
+    }
+
+    // Sync dirty relations to DB (up to 500 per tick to avoid flooding)
+    const dirtyKeys = Array.from(this.dirtyRelations).slice(0, 500);
+    for (const key of dirtyKeys) {
+      const [aStr, bStr] = key.split(":");
+      const agentIdA = parseInt(aStr, 10);
+      const agentIdB = parseInt(bStr, 10);
+      const level = this.relations.get(agentIdA)?.get(agentIdB);
+      if (level !== undefined) {
+        await db.update(relationsTable)
+          .set({ friendshipLevel: level })
+          .where(eq(relationsTable.agentIdA, agentIdA));
+      }
+      this.dirtyRelations.delete(key);
     }
 
     const { avgMood, avgWealth, unemploymentRate } = this.getAggregateStats();
@@ -679,11 +741,12 @@ class SimulationEngine {
     if (filterAction) {
       agents = agents.filter(a => a.currentAction === filterAction);
     }
-    if (sortBy) {
+    if (sortBy && (AGENT_SORT_KEYS as readonly string[]).includes(sortBy)) {
+      const key = sortBy as AgentSortKey;
       agents.sort((a, b) => {
-        const aVal = (a as any)[sortBy] ?? 0;
-        const bVal = (b as any)[sortBy] ?? 0;
-        const cmp = typeof aVal === "string" ? aVal.localeCompare(bVal) : aVal - bVal;
+        const aVal = a[key] ?? 0;
+        const bVal = b[key] ?? 0;
+        const cmp = typeof aVal === "string" ? (aVal as string).localeCompare(bVal as string) : (aVal as number) - (bVal as number);
         return sortDir === "desc" ? -cmp : cmp;
       });
     }
@@ -724,6 +787,7 @@ class SimulationEngine {
       socialization: agent.socialization,
       currentAction: agent.currentAction,
       employerId: agent.employerId,
+      recentActions: [...agent.recentActions],
       needs: {
         hunger: Math.round(agent.needs.hunger * 10) / 10,
         comfort: Math.round(agent.needs.comfort * 10) / 10,
@@ -732,18 +796,18 @@ class SimulationEngine {
     };
   }
 
-  async getAgentRelations(agentId: number) {
-    const rows = await db
-      .select()
-      .from(relationsTable)
-      .where(eq(relationsTable.agentIdA, agentId))
-      .limit(20);
-    return rows.map(r => {
-      const other = this.agents.get(r.agentIdB);
+  getAgentRelations(agentId: number) {
+    const relMap = this.relations.get(agentId);
+    if (!relMap) return [];
+    const entries = Array.from(relMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20);
+    return entries.map(([otherId, friendshipLevel]) => {
+      const other = this.agents.get(otherId);
       return {
-        otherId: r.agentIdB,
-        otherName: other?.name ?? `Агент ${r.agentIdB}`,
-        friendshipLevel: Math.round(r.friendshipLevel * 10) / 10,
+        otherId,
+        otherName: other?.name ?? `Агент ${otherId}`,
+        friendshipLevel: Math.round(friendshipLevel * 10) / 10,
       };
     });
   }
