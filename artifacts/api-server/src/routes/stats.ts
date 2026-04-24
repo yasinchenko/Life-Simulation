@@ -44,4 +44,8 @@ router.get("/stats/top-agents", (req, res): void => {
   res.json(GetTopAgentsResponse.parse(top));
 });
 
+router.get("/stats/population-breakdown", (_req, res): void => {
+  res.json(simulationEngine.getPopulationBreakdown());
+});
+
 export default router;

@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useEffect } from "react";
 import {
   useGetSimulationState,
   getGetSimulationStateQueryKey,
@@ -7,34 +6,17 @@ import {
   getGetStatsHistoryQueryKey,
   getGetStatsSummaryQueryKey,
   useGetStatsSummary,
-  useGetTopAgents,
-  getGetTopAgentsQueryKey,
-  type Agent,
-  type TopAgentsResponse,
 } from "@workspace/api-client-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Settings } from "lucide-react";
+import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Settings } from "lucide-react";
 import StatCard from "@/components/stat-card";
 import DebugPanel from "@/components/debug-panel";
+import PopulationChart from "@/components/population-chart";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import { useLocation } from "wouter";
-
-interface AgentStatSnapshot {
-  tick: number;
-  money: number;
-  mood: number;
-  age: number;
-  socialization: number;
-}
-
-const LEADERBOARD_SIZES = [5, 10, 25] as const;
-type LeaderboardSize = typeof LEADERBOARD_SIZES[number];
 
 export default function Dashboard() {
-  const [, navigate] = useLocation();
-  const [leaderboardSize, setLeaderboardSize] = useState<LeaderboardSize>(10);
   const [tickFlash, setTickFlash] = useState(false);
   const prevTickRef = useRef<number | undefined>(undefined);
 
@@ -57,13 +39,6 @@ export default function Dashboard() {
   const { data: summary } = useGetStatsSummary({
     query: {
       queryKey: getGetStatsSummaryQueryKey(),
-      refetchInterval: running ? 7000 : 30000,
-    },
-  });
-
-  const { data: topAgents } = useGetTopAgents({ limit: leaderboardSize }, {
-    query: {
-      queryKey: getGetTopAgentsQueryKey({ limit: leaderboardSize }),
       refetchInterval: running ? 7000 : 30000,
     },
   });
@@ -176,15 +151,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {topAgents && (
-        <UnifiedLeaderboard
-          topAgents={topAgents}
-          running={running}
-          leaderboardSize={leaderboardSize}
-          onSizeChange={setLeaderboardSize}
-          onRowClick={(id) => navigate(`/agents/${id}`)}
-        />
-      )}
+      <PopulationChart running={running} />
 
       {chartData.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -252,317 +219,3 @@ function ChartCard({ title, data, dataKey, color, domain, running }: {
   );
 }
 
-type LeaderboardStat = "wealth" | "mood" | "age" | "socialization";
-
-const LEADERBOARD_STATS: { key: LeaderboardStat; label: string; valueLabel: string; getValue: (a: Agent) => string; historyKey: keyof AgentStatSnapshot; color: string }[] = [
-  { key: "wealth", label: "Богатство", valueLabel: "Средства", getValue: (a) => Math.round(a.money).toLocaleString(), historyKey: "money", color: "hsl(173,80%,40%)" },
-  { key: "mood", label: "Настроение", valueLabel: "Настр.", getValue: (a) => a.mood.toFixed(1), historyKey: "mood", color: "hsl(43,100%,50%)" },
-  { key: "age", label: "Возраст", valueLabel: "Лет", getValue: (a) => String(a.age), historyKey: "age", color: "hsl(210,100%,60%)" },
-  { key: "socialization", label: "Общение", valueLabel: "Социал.", getValue: (a) => a.socialization.toFixed(1), historyKey: "socialization", color: "hsl(280,80%,65%)" },
-];
-
-type RankChange = { direction: "up" | "down"; expiresAt: number };
-
-function SparklineTooltip({ history, statKey, color, agentName }: {
-  history: AgentStatSnapshot[];
-  statKey: keyof AgentStatSnapshot;
-  color: string;
-  agentName: string;
-}) {
-  if (history.length < 2) {
-    return (
-      <div className="text-[10px] text-muted-foreground px-1">
-        Недостаточно данных
-      </div>
-    );
-  }
-
-  const values = history.map(h => h[statKey] as number);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  const W = 140;
-  const H = 48;
-  const pad = 4;
-  const innerW = W - pad * 2;
-  const innerH = H - pad * 2;
-
-  const points = values.map((v, i) => {
-    const x = pad + (i / (values.length - 1)) * innerW;
-    const y = pad + (1 - (v - min) / range) * innerH;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-
-  const lastVal = values[values.length - 1];
-  const firstVal = values[0];
-  const trend = lastVal - firstVal;
-
-  return (
-    <div>
-      <p className="text-[10px] font-medium text-foreground mb-1.5 truncate max-w-[140px]">{agentName}</p>
-      <svg width={W} height={H} className="block">
-        <polyline
-          points={points}
-          fill="none"
-          stroke={color}
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {values.map((v, i) => {
-          if (i !== values.length - 1) return null;
-          const x = pad + (i / (values.length - 1)) * innerW;
-          const y = pad + (1 - (v - min) / range) * innerH;
-          return <circle key={i} cx={x} cy={y} r={2.5} fill={color} />;
-        })}
-      </svg>
-      <div className="flex items-center justify-between mt-1">
-        <span className="text-[9px] text-muted-foreground">
-          {typeof firstVal === "number" ? (Number.isInteger(firstVal) ? firstVal.toLocaleString() : firstVal.toFixed(1)) : firstVal}
-        </span>
-        <span className={cn("text-[9px] font-semibold", trend >= 0 ? "text-[hsl(173,80%,40%)]" : "text-[hsl(348,83%,47%)]")}>
-          {trend >= 0 ? "+" : ""}{typeof trend === "number" ? (Number.isInteger(trend) ? Math.round(trend).toLocaleString() : trend.toFixed(1)) : trend}
-        </span>
-        <span className="text-[9px] text-muted-foreground">
-          {typeof lastVal === "number" ? (Number.isInteger(lastVal) ? lastVal.toLocaleString() : lastVal.toFixed(1)) : lastVal}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function UnifiedLeaderboard({ topAgents, running, leaderboardSize, onSizeChange, onRowClick }: {
-  topAgents: TopAgentsResponse;
-  running: boolean;
-  leaderboardSize: LeaderboardSize;
-  onSizeChange: (size: LeaderboardSize) => void;
-  onRowClick: (id: number) => void;
-}) {
-  const [activeStat, setActiveStat] = useState<LeaderboardStat>("wealth");
-  const medalColors = ["hsl(43,100%,50%)", "hsl(210,10%,70%)", "hsl(30,80%,50%)"];
-
-  const statConfig = LEADERBOARD_STATS.find(s => s.key === activeStat)!;
-  const entries: Agent[] =
-    activeStat === "wealth" ? topAgents.byWealth :
-    activeStat === "mood" ? topAgents.byMood :
-    activeStat === "age" ? topAgents.byAge :
-    topAgents.bySocialization;
-
-  const prevRanksRef = useRef<Map<string, Map<number, number>>>(new Map());
-  const [rankChanges, setRankChanges] = useState<Map<string, Map<number, RankChange>>>(new Map());
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [hoveredAgentId, setHoveredAgentId] = useState<number | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-  const [agentHistory, setAgentHistory] = useState<Map<number, AgentStatSnapshot[]>>(new Map());
-  const fetchingRef = useRef<Set<number>>(new Set());
-
-  const fetchHistory = useCallback(async (id: number) => {
-    if (fetchingRef.current.has(id)) return;
-    fetchingRef.current.add(id);
-    try {
-      const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
-      const res = await fetch(`${base}/api/agents/${id}/stat-history`);
-      if (res.ok) {
-        const data: AgentStatSnapshot[] = await res.json();
-        setAgentHistory(prev => new Map(prev).set(id, data));
-      }
-    } catch {
-    } finally {
-      fetchingRef.current.delete(id);
-    }
-  }, []);
-
-  const handleRowMouseEnter = useCallback((agent: Agent, e: React.MouseEvent) => {
-    setHoveredAgentId(agent.id);
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setTooltipPos({ x: rect.right + 8, y: rect.top });
-    fetchHistory(agent.id);
-  }, [fetchHistory]);
-
-  const handleRowMouseLeave = useCallback(() => {
-    setHoveredAgentId(null);
-    setTooltipPos(null);
-  }, []);
-
-  useEffect(() => {
-    setRankChanges(new Map());
-  }, [activeStat]);
-
-  useEffect(() => {
-    const key = activeStat;
-    const prevRanks = prevRanksRef.current.get(key);
-    const nowRanks = new Map(entries.map((a, i) => [a.id, i]));
-
-    if (prevRanks && prevRanks.size > 0) {
-      const changes = new Map<number, RankChange>();
-      const expiresAt = Date.now() + 3000;
-
-      entries.forEach((agent, currentRank) => {
-        const prevRank = prevRanks.get(agent.id);
-        if (prevRank !== undefined && prevRank !== currentRank) {
-          changes.set(agent.id, {
-            direction: currentRank < prevRank ? "up" : "down",
-            expiresAt,
-          });
-        }
-      });
-
-      if (changes.size > 0) {
-        setRankChanges(prev => {
-          const statMap = new Map(prev.get(key) ?? []);
-          changes.forEach((v, k) => statMap.set(k, v));
-          const next = new Map(prev);
-          next.set(key, statMap);
-          return next;
-        });
-
-        if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
-        fadeTimerRef.current = setTimeout(() => {
-          const now = Date.now();
-          setRankChanges(prev => {
-            const statMap = prev.get(key);
-            if (!statMap) return prev;
-            const nextStatMap = new Map<number, RankChange>();
-            statMap.forEach((v, k) => { if (v.expiresAt > now) nextStatMap.set(k, v); });
-            const next = new Map(prev);
-            next.set(key, nextStatMap);
-            return next;
-          });
-        }, 3100);
-      }
-    }
-
-    prevRanksRef.current.set(key, nowRanks);
-  }, [entries, activeStat]);
-
-  useEffect(() => {
-    return () => { if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current); };
-  }, []);
-
-  const hoveredHistory = hoveredAgentId != null ? agentHistory.get(hoveredAgentId) : undefined;
-  const hoveredAgent = hoveredAgentId != null ? entries.find(a => a.id === hoveredAgentId) : undefined;
-
-  return (
-    <div className="bg-card border border-card-border rounded p-4 relative">
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <Trophy className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Лидеры</h3>
-        {running && (
-          <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border border-[hsl(173,80%,40%)]/25">
-            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(173,80%,40%)] animate-pulse inline-block" />
-            LIVE
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1">
-            {LEADERBOARD_SIZES.map(size => (
-              <button
-                key={size}
-                onClick={() => onSizeChange(size)}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
-                  leaderboardSize === size
-                    ? "bg-secondary border-border text-foreground"
-                    : "bg-transparent border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
-                )}
-              >
-                Топ {size}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1">
-            {LEADERBOARD_STATS.map(s => (
-              <button
-                key={s.key}
-                onClick={() => setActiveStat(s.key)}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
-                  activeStat === s.key
-                    ? "bg-primary/15 border-primary/40 text-primary"
-                    : "bg-transparent border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center justify-between px-2 mb-1">
-        <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60">Житель</span>
-        <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60">{statConfig.valueLabel}</span>
-      </div>
-      <ol className="space-y-1">
-        {entries.map((agent, i) => {
-          const statMap = rankChanges.get(activeStat);
-          const change = statMap?.get(agent.id);
-          const isExpired = change && change.expiresAt <= Date.now();
-          const activeChange = change && !isExpired ? change : null;
-          return (
-            <li key={agent.id}>
-              <button
-                onClick={() => onRowClick(agent.id)}
-                onMouseEnter={(e) => handleRowMouseEnter(agent, e)}
-                onMouseLeave={handleRowMouseLeave}
-                className={cn(
-                  "w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 transition-colors text-left group",
-                  activeChange?.direction === "up" && "animate-rank-up",
-                  activeChange?.direction === "down" && "animate-rank-down",
-                )}
-              >
-                <span
-                  className="w-4 text-center text-[10px] font-bold shrink-0"
-                  style={{ color: i < 3 ? medalColors[i] : "hsl(210,10%,50%)" }}
-                >
-                  {i + 1}
-                </span>
-                <span className="flex-1 text-xs text-foreground group-hover:text-primary truncate">
-                  {agent.name}
-                </span>
-                {activeChange && (
-                  <span
-                    className={cn(
-                      "text-[10px] font-bold shrink-0 animate-rank-arrow",
-                      activeChange.direction === "up"
-                        ? "text-[hsl(173,80%,40%)]"
-                        : "text-[hsl(348,83%,47%)]"
-                    )}
-                  >
-                    {activeChange.direction === "up" ? "↑" : "↓"}
-                  </span>
-                )}
-                <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{statConfig.getValue(agent)}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-
-      {hoveredAgentId != null && tooltipPos && (
-        <div
-          className="fixed z-50 bg-card border border-card-border rounded p-3 shadow-lg pointer-events-none"
-          style={{
-            left: Math.min(tooltipPos.x, window.innerWidth - 180),
-            top: Math.max(8, tooltipPos.y - 20),
-          }}
-        >
-          {hoveredHistory && hoveredHistory.length >= 2 ? (
-            <SparklineTooltip
-              history={hoveredHistory}
-              statKey={statConfig.historyKey}
-              color={statConfig.color}
-              agentName={hoveredAgent?.name ?? ""}
-            />
-          ) : (
-            <div>
-              <p className="text-[10px] font-medium text-foreground mb-1 truncate max-w-[140px]">{hoveredAgent?.name}</p>
-              <p className="text-[10px] text-muted-foreground">История накапливается...</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}

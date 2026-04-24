@@ -1234,6 +1234,38 @@ class SimulationEngine {
     return this.lastTickReport;
   }
 
+  getPopulationBreakdown() {
+    const agents = Array.from(this.agents.values());
+    const total = agents.length;
+
+    const employed = agents.filter(a => a.employerId != null && !a.isRetired).length;
+    const unemployed = agents.filter(a => a.employerId == null && !a.isRetired).length;
+    const retired = agents.filter(a => !!a.isRetired).length;
+
+    const youth  = agents.filter(a => a.age <= 30).length;
+    const adult  = agents.filter(a => a.age >= 31 && a.age <= 50).length;
+    const mature = agents.filter(a => a.age >= 51 && a.age <= 65).length;
+    const elder  = agents.filter(a => a.age > 65).length;
+
+    const personalityCounts: Record<string, number> = {};
+    for (const a of agents) {
+      personalityCounts[a.personality] = (personalityCounts[a.personality] ?? 0) + 1;
+    }
+
+    const actionCounts: Record<string, number> = {};
+    for (const a of agents) {
+      actionCounts[a.currentAction] = (actionCounts[a.currentAction] ?? 0) + 1;
+    }
+
+    return {
+      total,
+      byEmployment: { employed, unemployed, retired },
+      byAge: { youth, adult, mature, elder },
+      byPersonality: personalityCounts,
+      byAction: actionCounts,
+    };
+  }
+
   getAgents(page: number, limit: number, sortBy?: string, sortDir?: string, filterAction?: string) {
     let agents = Array.from(this.agents.values());
     if (filterAction) {
