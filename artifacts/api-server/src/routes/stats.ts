@@ -48,4 +48,13 @@ router.get("/stats/population-breakdown", (_req, res): void => {
   res.json(simulationEngine.getPopulationBreakdown());
 });
 
+router.get("/stats/population-groups", (req, res): void => {
+  const groupBy = req.query.groupBy as string;
+  if (!["personality", "employment", "ageGroup"].includes(groupBy)) {
+    res.status(400).json({ error: "groupBy must be personality | employment | ageGroup" });
+    return;
+  }
+  res.json(simulationEngine.getPopulationGroups(groupBy as "personality" | "employment" | "ageGroup"));
+});
+
 export default router;

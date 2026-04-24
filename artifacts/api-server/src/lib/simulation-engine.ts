@@ -1266,6 +1266,59 @@ class SimulationEngine {
     };
   }
 
+  getPopulationGroups(groupBy: "personality" | "employment" | "ageGroup") {
+    const agents = Array.from(this.agents.values());
+    const total = agents.length;
+
+    const ACTION_RU: Record<string, string> = { work: "Работает", eat: "Ест", rest: "Отдыхает", socialize: "Общается", idle: "Простаивает" };
+
+    const getGroupKey = (a: AgentState): string => {
+      if (groupBy === "personality") return a.personality;
+      if (groupBy === "employment") {
+        if (a.isRetired) return "Пенсионеры";
+        if (a.employerId != null) return "Работающие";
+        return "Безработные";
+      }
+      if (a.age <= 30) return "18–30 (молодёжь)";
+      if (a.age <= 50) return "31–50 (взрослые)";
+      if (a.age <= 65) return "51–65 (зрелые)";
+      return "66+ (пожилые)";
+    };
+
+    const groups = new Map<string, AgentState[]>();
+    for (const a of agents) {
+      const key = getGroupKey(a);
+      const arr = groups.get(key) ?? [];
+      arr.push(a);
+      groups.set(key, arr);
+    }
+
+    const rows = Array.from(groups.entries()).map(([label, members]) => {
+      const count = members.length;
+      const avgMood  = members.reduce((s, a) => s + a.mood, 0) / count;
+      const avgMoney = members.reduce((s, a) => s + a.money, 0) / count;
+      const avgAge   = members.reduce((s, a) => s + a.age, 0) / count;
+      const employedCount = members.filter(a => a.employerId != null && !a.isRetired).length;
+      const actionFreq: Record<string, number> = {};
+      for (const a of members) actionFreq[a.currentAction] = (actionFreq[a.currentAction] ?? 0) + 1;
+      const topAction = Object.entries(actionFreq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "idle";
+      return {
+        label,
+        count,
+        pct: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+        avgMood:  Math.round(avgMood * 10) / 10,
+        avgMoney: Math.round(avgMoney),
+        avgAge:   Math.round(avgAge),
+        employedCount,
+        topAction: ACTION_RU[topAction] ?? topAction,
+        topActionKey: topAction,
+      };
+    });
+
+    rows.sort((a, b) => b.count - a.count);
+    return { groupBy, total, groups: rows };
+  }
+
   getAgents(page: number, limit: number, sortBy?: string, sortDir?: string, filterAction?: string) {
     let agents = Array.from(this.agents.values());
     if (filterAction) {
