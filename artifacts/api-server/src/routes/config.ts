@@ -46,6 +46,12 @@ router.put("/config", async (req, res): Promise<void> => {
   if (data.baseFoodPrice !== undefined && data.baseFoodPrice <= 0) {
     rangeErrors.push("baseFoodPrice must be positive");
   }
+  if (data.initialAgents !== undefined && data.initialAgents < 1000) {
+    rangeErrors.push("initialAgents must be at least 1000");
+  }
+  if (data.initialBusinesses !== undefined && data.initialBusinesses < 1) {
+    rangeErrors.push("initialBusinesses must be at least 1");
+  }
 
   if (rangeErrors.length > 0) {
     res.status(400).json({ error: rangeErrors.join("; ") });

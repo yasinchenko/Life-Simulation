@@ -50,8 +50,8 @@ const FIELDS: SettingField[] = [
   {
     key: "initialAgents",
     label: "Начальное число агентов",
-    description: "Сколько жителей генерируется при сбросе симуляции",
-    min: 100,
+    description: "Сколько жителей генерируется при сбросе (минимум 1000)",
+    min: 1000,
     max: 5000,
     step: 100,
     format: v => v.toFixed(0),
