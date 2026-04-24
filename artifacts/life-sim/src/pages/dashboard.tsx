@@ -87,7 +87,19 @@ export default function Dashboard() {
     gdp: Math.round(h.gdp / 1000),
     population: h.population,
     wealth: Math.round(h.avgWealth * 10) / 10,
+    unemployment: Math.round(h.unemploymentRate * 10) / 10,
+    govBudget: Math.round(h.governmentBudget),
   })) ?? [];
+
+  const last20 = chartData.slice(-20);
+  const sparklines = {
+    population: last20.map(d => d.population),
+    mood: last20.map(d => d.mood),
+    gdp: last20.map(d => d.gdp),
+    unemployment: last20.map(d => d.unemployment),
+    govBudget: last20.map(d => d.govBudget),
+    wealth: last20.map(d => d.wealth),
+  };
 
   const formatGameTime = () => {
     if (!state) return "--:--";
@@ -151,12 +163,12 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard label="Население" value={state?.population?.toLocaleString() ?? "--"} icon={Users} accent="teal" />
-        <StatCard label="Ср. настроение" value={state?.avgMood?.toFixed(1) ?? "--"} sub="из 100" icon={Heart} accent="amber" />
-        <StatCard label="ВВП (капитал)" value={state ? `${Math.round(state.gdp / 1000)}K` : "--"} icon={TrendingUp} accent="blue" />
-        <StatCard label="Безработица" value={state ? `${state.unemploymentRate.toFixed(1)}%` : "--"} icon={AlertTriangle} accent="crimson" />
-        <StatCard label="Бюджет гос-ва" value={state ? `${Math.round(state.governmentBudget).toLocaleString()}` : "--"} icon={Landmark} accent="purple" />
-        <StatCard label="Ср. богатство" value={state ? `${state.avgWealth.toFixed(0)}` : "--"} icon={Coins} accent="teal" />
+        <StatCard label="Население" value={state?.population?.toLocaleString() ?? "--"} icon={Users} accent="teal" sparklineData={sparklines.population} running={running} />
+        <StatCard label="Ср. настроение" value={state?.avgMood?.toFixed(1) ?? "--"} sub="из 100" icon={Heart} accent="amber" sparklineData={sparklines.mood} running={running} />
+        <StatCard label="ВВП (капитал)" value={state ? `${Math.round(state.gdp / 1000)}K` : "--"} icon={TrendingUp} accent="blue" sparklineData={sparklines.gdp} running={running} />
+        <StatCard label="Безработица" value={state ? `${state.unemploymentRate.toFixed(1)}%` : "--"} icon={AlertTriangle} accent="crimson" sparklineData={sparklines.unemployment} running={running} />
+        <StatCard label="Бюджет гос-ва" value={state ? `${Math.round(state.governmentBudget).toLocaleString()}` : "--"} icon={Landmark} accent="purple" sparklineData={sparklines.govBudget} running={running} />
+        <StatCard label="Ср. богатство" value={state ? `${state.avgWealth.toFixed(0)}` : "--"} icon={Coins} accent="teal" sparklineData={sparklines.wealth} running={running} />
       </div>
 
       {summary && (
