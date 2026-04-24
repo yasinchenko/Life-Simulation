@@ -300,34 +300,27 @@ export const GetStatsSummaryResponse = zod.object({
 })
 
 
+const agentShape = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "gender": zod.string(),
+  "age": zod.number(),
+  "mood": zod.number(),
+  "money": zod.number(),
+  "personality": zod.string(),
+  "socialization": zod.number(),
+  "currentAction": zod.string(),
+  "employerId": zod.number().nullish()
+});
+
 /**
- * @summary Get top agents by wealth and mood
+ * @summary Get top agents by wealth, mood, age, and socialization
  */
 export const GetTopAgentsResponse = zod.object({
-  "byWealth": zod.array(zod.object({
-  "id": zod.number(),
-  "name": zod.string(),
-  "gender": zod.string(),
-  "age": zod.number(),
-  "mood": zod.number(),
-  "money": zod.number(),
-  "personality": zod.string(),
-  "socialization": zod.number(),
-  "currentAction": zod.string(),
-  "employerId": zod.number().nullish()
-})),
-  "byMood": zod.array(zod.object({
-  "id": zod.number(),
-  "name": zod.string(),
-  "gender": zod.string(),
-  "age": zod.number(),
-  "mood": zod.number(),
-  "money": zod.number(),
-  "personality": zod.string(),
-  "socialization": zod.number(),
-  "currentAction": zod.string(),
-  "employerId": zod.number().nullish()
-}))
+  "byWealth": zod.array(agentShape),
+  "byMood": zod.array(agentShape),
+  "byAge": zod.array(agentShape),
+  "bySocialization": zod.array(agentShape),
 })
 
 

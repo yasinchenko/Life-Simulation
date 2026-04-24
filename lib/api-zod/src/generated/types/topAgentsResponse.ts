@@ -10,4 +10,6 @@ import type { Agent } from './agent';
 export interface TopAgentsResponse {
   byWealth: Agent[];
   byMood: Agent[];
+  byAge: Agent[];
+  bySocialization: Agent[];
 }

@@ -697,9 +697,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Agent"
+        byAge:
+          type: array
+          items:
+            $ref: "#/components/schemas/Agent"
+        bySocialization:
+          type: array
+          items:
+            $ref: "#/components/schemas/Agent"
       required:
         - byWealth
         - byMood
+        - byAge
+        - bySocialization
 
     ErrorResponse:
       type: object

@@ -179,6 +179,8 @@ export interface StatsSummary {
 export interface TopAgentsResponse {
   byWealth: Agent[];
   byMood: Agent[];
+  byAge: Agent[];
+  bySocialization: Agent[];
 }
 
 export interface ErrorResponse {

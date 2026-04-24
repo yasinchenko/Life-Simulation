@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetSimulationState,
@@ -9,9 +10,10 @@ import {
   useGetTopAgents,
   getGetTopAgentsQueryKey,
   type Agent,
+  type TopAgentsResponse,
 } from "@workspace/api-client-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Smile, Settings } from "lucide-react";
+import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Settings } from "lucide-react";
 import StatCard from "@/components/stat-card";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
@@ -138,27 +140,12 @@ export default function Dashboard() {
         </div>
       )}
 
-      {topAgents && (topAgents.byWealth.length > 0 || topAgents.byMood.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <LeaderboardCard
-            title="Богатейшие жители"
-            icon={Trophy}
-            entries={topAgents.byWealth}
-            valueLabel="Средства"
-            getValue={(a) => `${Math.round(a.money).toLocaleString()}`}
-            running={running}
-            onRowClick={(id) => navigate(`/agents/${id}`)}
-          />
-          <LeaderboardCard
-            title="Счастливейшие жители"
-            icon={Smile}
-            entries={topAgents.byMood}
-            valueLabel="Настроение"
-            getValue={(a) => `${a.mood.toFixed(1)}`}
-            running={running}
-            onRowClick={(id) => navigate(`/agents/${id}`)}
-          />
-        </div>
+      {topAgents && (
+        <UnifiedLeaderboard
+          topAgents={topAgents}
+          running={running}
+          onRowClick={(id) => navigate(`/agents/${id}`)}
+        />
       )}
 
       {chartData.length > 0 && (
@@ -225,29 +212,61 @@ function ChartCard({ title, data, dataKey, color, domain, running }: {
   );
 }
 
-function LeaderboardCard({ title, icon: Icon, entries, valueLabel, getValue, running, onRowClick }: {
-  title: string;
-  icon: React.ElementType;
-  entries: Agent[];
-  valueLabel: string;
-  getValue: (a: Agent) => string;
+type LeaderboardStat = "wealth" | "mood" | "age" | "socialization";
+
+const LEADERBOARD_STATS: { key: LeaderboardStat; label: string; valueLabel: string; getValue: (a: Agent) => string }[] = [
+  { key: "wealth", label: "Богатство", valueLabel: "Средства", getValue: (a) => Math.round(a.money).toLocaleString() },
+  { key: "mood", label: "Настроение", valueLabel: "Настр.", getValue: (a) => a.mood.toFixed(1) },
+  { key: "age", label: "Возраст", valueLabel: "Лет", getValue: (a) => String(a.age) },
+  { key: "socialization", label: "Общение", valueLabel: "Социал.", getValue: (a) => a.socialization.toFixed(1) },
+];
+
+function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
+  topAgents: TopAgentsResponse;
   running: boolean;
   onRowClick: (id: number) => void;
 }) {
+  const [activeStat, setActiveStat] = useState<LeaderboardStat>("wealth");
   const medalColors = ["hsl(43,100%,50%)", "hsl(210,10%,70%)", "hsl(30,80%,50%)"];
+
+  const statConfig = LEADERBOARD_STATS.find(s => s.key === activeStat)!;
+  const entries: Agent[] =
+    activeStat === "wealth" ? topAgents.byWealth :
+    activeStat === "mood" ? topAgents.byMood :
+    activeStat === "age" ? topAgents.byAge :
+    topAgents.bySocialization;
 
   return (
     <div className="bg-card border border-card-border rounded p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-        <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">{title}</h3>
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <Trophy className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Лидеры</h3>
         {running && (
           <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border border-[hsl(173,80%,40%)]/25">
             <span className="w-1.5 h-1.5 rounded-full bg-[hsl(173,80%,40%)] animate-pulse inline-block" />
             LIVE
           </span>
         )}
-        <span className="ml-auto text-[10px] text-muted-foreground">{valueLabel}</span>
+        <div className="ml-auto flex items-center gap-1 flex-wrap">
+          {LEADERBOARD_STATS.map(s => (
+            <button
+              key={s.key}
+              onClick={() => setActiveStat(s.key)}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
+                activeStat === s.key
+                  ? "bg-primary/15 border-primary/40 text-primary"
+                  : "bg-transparent border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center justify-between px-2 mb-1">
+        <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60">Житель</span>
+        <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60">{statConfig.valueLabel}</span>
       </div>
       <ol className="space-y-1">
         {entries.map((agent, i) => (
@@ -265,8 +284,7 @@ function LeaderboardCard({ title, icon: Icon, entries, valueLabel, getValue, run
               <span className="flex-1 text-xs text-foreground group-hover:text-primary truncate">
                 {agent.name}
               </span>
-              <span className="text-[10px] text-muted-foreground shrink-0">{agent.age} л.</span>
-              <span className="text-xs font-medium text-foreground shrink-0 tabular-nums">{getValue(agent)}</span>
+              <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{statConfig.getValue(agent)}</span>
             </button>
           </li>
         ))}
