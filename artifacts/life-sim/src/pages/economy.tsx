@@ -3,6 +3,8 @@ import {
   getListBusinessesQueryKey,
   useListGoods,
   getListGoodsQueryKey,
+  useGetSimulationState,
+  getGetSimulationStateQueryKey,
 } from "@workspace/api-client-react";
 import { Building2, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -14,18 +16,34 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function EconomyPage() {
+  const { data: simState } = useGetSimulationState({
+    query: {
+      queryKey: getGetSimulationStateQueryKey(),
+      refetchInterval: 5000,
+    },
+  });
+  const running = simState?.running ?? false;
+
   const { data: businesses, isLoading: bizLoading } = useListBusinesses({
-    query: { queryKey: getListBusinessesQueryKey(), refetchInterval: 15000 },
+    query: { queryKey: getListBusinessesQueryKey(), refetchInterval: running ? 7000 : 15000 },
   });
 
   const { data: goods, isLoading: goodsLoading } = useListGoods({
-    query: { queryKey: getListGoodsQueryKey(), refetchInterval: 15000 },
+    query: { queryKey: getListGoodsQueryKey(), refetchInterval: running ? 7000 : 15000 },
   });
 
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-base font-semibold text-foreground">Экономика</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-base font-semibold text-foreground">Экономика</h1>
+          {running && (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border border-[hsl(173,80%,40%)]/25">
+              <span className="w-1.5 h-1.5 rounded-full bg-[hsl(173,80%,40%)] animate-pulse inline-block" />
+              LIVE
+            </span>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground mt-0.5">
           {businesses?.length ?? 0} бизнесов · {goods?.length ?? 0} товаров
         </p>

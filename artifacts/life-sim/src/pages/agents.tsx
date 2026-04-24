@@ -3,11 +3,13 @@ import { useLocation } from "wouter";
 import {
   useListAgents,
   useGetConfig,
+  useGetSimulationState,
   getListAgentsQueryKey,
+  getGetSimulationStateQueryKey,
   type ListAgentsQueryResult,
 } from "@workspace/api-client-react";
 
-import { ChevronUp, ChevronDown, Search } from "lucide-react";
+import { ChevronUp, ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -38,12 +40,20 @@ export default function AgentsPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [filterAction, setFilterAction] = useState<string>("");
 
+  const { data: simState } = useGetSimulationState({
+    query: {
+      queryKey: getGetSimulationStateQueryKey(),
+      refetchInterval: 5000,
+    },
+  });
+  const running = simState?.running ?? false;
+
   const { data: config } = useGetConfig();
   const tickIntervalMs = config?.tickIntervalMs ?? 60000;
 
   const { data, isLoading } = useListAgents(
     { page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined },
-    { query: { queryKey: getListAgentsQueryKey({ page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined }), refetchInterval: tickIntervalMs } }
+    { query: { queryKey: getListAgentsQueryKey({ page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined }), refetchInterval: running ? 7000 : tickIntervalMs } }
   );
 
   const handleSort = (col: SortBy) => {
@@ -65,7 +75,15 @@ export default function AgentsPage() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-base font-semibold text-foreground">Жители</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold text-foreground">Жители</h1>
+            {running && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border border-[hsl(173,80%,40%)]/25">
+                <span className="w-1.5 h-1.5 rounded-full bg-[hsl(173,80%,40%)] animate-pulse inline-block" />
+                LIVE
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             {data ? `${data.total.toLocaleString()} агентов · стр. ${data.page} из ${data.totalPages}` : "Загрузка..."}
           </p>
