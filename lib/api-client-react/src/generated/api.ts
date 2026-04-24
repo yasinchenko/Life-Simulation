@@ -25,6 +25,7 @@ import type {
   Business,
   ErrorResponse,
   GetStatsHistoryParams,
+  GetTopAgentsParams,
   Good,
   GovernmentState,
   HealthStatus,
@@ -1117,17 +1118,23 @@ export function useGetStatsSummary<TData = Awaited<ReturnType<typeof getStatsSum
 /**
  * @summary Get top agents by wealth and mood
  */
-export const getGetTopAgentsUrl = () => {
+export const getGetTopAgentsUrl = (params?: GetTopAgentsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-
-  return `/api/stats/top-agents`
+  return stringifiedParams.length > 0 ? `/api/stats/top-agents?${stringifiedParams}` : `/api/stats/top-agents`
 }
 
-export const getTopAgents = async ( options?: RequestInit): Promise<TopAgentsResponse> => {
+export const getTopAgents = async (params?: GetTopAgentsParams, options?: RequestInit): Promise<TopAgentsResponse> => {
 
-  return customFetch<TopAgentsResponse>(getGetTopAgentsUrl(),
+  return customFetch<TopAgentsResponse>(getGetTopAgentsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1140,23 +1147,23 @@ export const getTopAgents = async ( options?: RequestInit): Promise<TopAgentsRes
 
 
 
-export const getGetTopAgentsQueryKey = () => {
+export const getGetTopAgentsQueryKey = (params?: GetTopAgentsParams,) => {
     return [
-    `/api/stats/top-agents`
+    `/api/stats/top-agents`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetTopAgentsQueryOptions = <TData = Awaited<ReturnType<typeof getTopAgents>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTopAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTopAgentsQueryOptions = <TData = Awaited<ReturnType<typeof getTopAgents>>, TError = ErrorType<unknown>>(params?: GetTopAgentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTopAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetTopAgentsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTopAgentsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTopAgents>>> = ({ signal }) => getTopAgents({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTopAgents>>> = ({ signal }) => getTopAgents(params, { signal, ...requestOptions });
 
 
 
@@ -1174,11 +1181,11 @@ export type GetTopAgentsQueryError = ErrorType<unknown>
  */
 
 export function useGetTopAgents<TData = Awaited<ReturnType<typeof getTopAgents>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTopAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetTopAgentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTopAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetTopAgentsQueryOptions(options)
+  const queryOptions = getGetTopAgentsQueryOptions(params, options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

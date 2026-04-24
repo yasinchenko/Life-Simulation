@@ -28,8 +28,12 @@ interface AgentStatSnapshot {
   socialization: number;
 }
 
+const LEADERBOARD_SIZES = [5, 10, 25] as const;
+type LeaderboardSize = typeof LEADERBOARD_SIZES[number];
+
 export default function Dashboard() {
   const [, navigate] = useLocation();
+  const [leaderboardSize, setLeaderboardSize] = useState<LeaderboardSize>(10);
 
   const { data: state, isLoading } = useGetSimulationState({
     query: {
@@ -54,9 +58,9 @@ export default function Dashboard() {
     },
   });
 
-  const { data: topAgents } = useGetTopAgents({
+  const { data: topAgents } = useGetTopAgents({ limit: leaderboardSize }, {
     query: {
-      queryKey: getGetTopAgentsQueryKey(),
+      queryKey: getGetTopAgentsQueryKey({ limit: leaderboardSize }),
       refetchInterval: running ? 7000 : 30000,
     },
   });
@@ -153,6 +157,8 @@ export default function Dashboard() {
         <UnifiedLeaderboard
           topAgents={topAgents}
           running={running}
+          leaderboardSize={leaderboardSize}
+          onSizeChange={setLeaderboardSize}
           onRowClick={(id) => navigate(`/agents/${id}`)}
         />
       )}
@@ -301,9 +307,11 @@ function SparklineTooltip({ history, statKey, color, agentName }: {
   );
 }
 
-function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
+function UnifiedLeaderboard({ topAgents, running, leaderboardSize, onSizeChange, onRowClick }: {
   topAgents: TopAgentsResponse;
   running: boolean;
+  leaderboardSize: LeaderboardSize;
+  onSizeChange: (size: LeaderboardSize) => void;
   onRowClick: (id: number) => void;
 }) {
   const [activeStat, setActiveStat] = useState<LeaderboardStat>("wealth");
@@ -422,21 +430,39 @@ function UnifiedLeaderboard({ topAgents, running, onRowClick }: {
             LIVE
           </span>
         )}
-        <div className="ml-auto flex items-center gap-1 flex-wrap">
-          {LEADERBOARD_STATS.map(s => (
-            <button
-              key={s.key}
-              onClick={() => setActiveStat(s.key)}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
-                activeStat === s.key
-                  ? "bg-primary/15 border-primary/40 text-primary"
-                  : "bg-transparent border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
-              )}
-            >
-              {s.label}
-            </button>
-          ))}
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1">
+            {LEADERBOARD_SIZES.map(size => (
+              <button
+                key={size}
+                onClick={() => onSizeChange(size)}
+                className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
+                  leaderboardSize === size
+                    ? "bg-secondary border-border text-foreground"
+                    : "bg-transparent border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
+                )}
+              >
+                Топ {size}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            {LEADERBOARD_STATS.map(s => (
+              <button
+                key={s.key}
+                onClick={() => setActiveStat(s.key)}
+                className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-medium border transition-colors",
+                  activeStat === s.key
+                    ? "bg-primary/15 border-primary/40 text-primary"
+                    : "bg-transparent border-border text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="flex items-center justify-between px-2 mb-1">

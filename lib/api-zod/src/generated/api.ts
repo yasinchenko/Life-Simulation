@@ -314,6 +314,13 @@ const agentShape = zod.object({
 });
 
 /**
+ * @summary Query params for top agents endpoint
+ */
+export const GetTopAgentsQueryParams = zod.object({
+  limit: zod.coerce.number().int().min(1).max(100).optional(),
+})
+
+/**
  * @summary Get top agents by wealth, mood, age, and socialization
  */
 export const GetTopAgentsResponse = zod.object({

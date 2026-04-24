@@ -14,6 +14,7 @@ export * from './agentRelation';
 export * from './business';
 export * from './errorResponse';
 export * from './getStatsHistoryParams';
+export * from './getTopAgentsParams';
 export * from './good';
 export * from './governmentState';
 export * from './healthStatus';

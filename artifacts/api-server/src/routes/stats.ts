@@ -7,6 +7,7 @@ import {
   GetStatsHistoryQueryParams,
   GetStatsHistoryResponse,
   GetStatsSummaryResponse,
+  GetTopAgentsQueryParams,
   GetTopAgentsResponse,
 } from "@workspace/api-zod";
 
@@ -32,8 +33,14 @@ router.get("/stats/summary", (_req, res): void => {
   res.json(GetStatsSummaryResponse.parse(summary));
 });
 
-router.get("/stats/top-agents", (_req, res): void => {
-  const top = simulationEngine.getTopAgents();
+router.get("/stats/top-agents", (req, res): void => {
+  const parsed = GetTopAgentsQueryParams.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const limit = parsed.data.limit ?? 10;
+  const top = simulationEngine.getTopAgents(limit);
   res.json(GetTopAgentsResponse.parse(top));
 });
 

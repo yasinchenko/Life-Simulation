@@ -1062,18 +1062,19 @@ class SimulationEngine {
     };
   }
 
-  getTopAgents() {
+  getTopAgents(limit = 10) {
     const agents = Array.from(this.agents.values());
+    const n = Math.max(1, Math.min(100, limit));
     const mapAgent = (a: AgentState) => ({
       id: a.id, name: a.name, gender: a.gender, age: a.age,
       mood: Math.round(a.mood * 10) / 10, money: Math.round(a.money * 100) / 100,
       personality: a.personality, socialization: Math.round(a.socialization * 10) / 10,
       currentAction: a.currentAction, employerId: a.employerId,
     });
-    const byWealth = [...agents].sort((a, b) => b.money - a.money).slice(0, 10).map(mapAgent);
-    const byMood = [...agents].sort((a, b) => b.mood - a.mood).slice(0, 10).map(mapAgent);
-    const byAge = [...agents].sort((a, b) => b.age - a.age).slice(0, 10).map(mapAgent);
-    const bySocialization = [...agents].sort((a, b) => b.socialization - a.socialization).slice(0, 10).map(mapAgent);
+    const byWealth = [...agents].sort((a, b) => b.money - a.money).slice(0, n).map(mapAgent);
+    const byMood = [...agents].sort((a, b) => b.mood - a.mood).slice(0, n).map(mapAgent);
+    const byAge = [...agents].sort((a, b) => b.age - a.age).slice(0, n).map(mapAgent);
+    const bySocialization = [...agents].sort((a, b) => b.socialization - a.socialization).slice(0, n).map(mapAgent);
     return { byWealth, byMood, byAge, bySocialization };
   }
 

@@ -218,3 +218,7 @@ export type GetStatsHistoryParams = {
 limit?: number;
 };
 
+export type GetTopAgentsParams = {
+limit?: number;
+};
+
