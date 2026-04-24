@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetConfig,
@@ -194,6 +195,7 @@ function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
 export default function SettingsPage() {
   const { isAdmin, logout } = useAdmin();
   const qc = useQueryClient();
+  const [, setLocation] = useLocation();
   const [showLogin, setShowLogin] = useState(false);
 
   const { data: config, isLoading: configLoading } = useGetConfig({
@@ -265,8 +267,9 @@ export default function SettingsPage() {
   const resetMutation = useResetSimulation({
     mutation: {
       onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetSimulationStateQueryKey() });
-        toast.success("Симуляция сброшена");
+        qc.invalidateQueries();
+        toast.success("Симуляция сброшена — переход на дашборд");
+        setTimeout(() => setLocation("/"), 1500);
       },
     },
   });
