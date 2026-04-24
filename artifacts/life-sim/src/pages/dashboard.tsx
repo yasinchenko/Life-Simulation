@@ -26,12 +26,20 @@ export default function Dashboard() {
     },
   });
 
+  const running = state?.running ?? false;
+
   const { data: history } = useGetStatsHistory({ limit: 60 }, {
-    query: { queryKey: getGetStatsHistoryQueryKey({ limit: 60 }), refetchInterval: 60000 },
+    query: {
+      queryKey: getGetStatsHistoryQueryKey({ limit: 60 }),
+      refetchInterval: running ? 7000 : 60000,
+    },
   });
 
   const { data: summary } = useGetStatsSummary({
-    query: { queryKey: getGetStatsSummaryQueryKey(), refetchInterval: 30000 },
+    query: {
+      queryKey: getGetStatsSummaryQueryKey(),
+      refetchInterval: running ? 7000 : 30000,
+    },
   });
 
   const startMutation = useStartSimulation({
@@ -60,8 +68,6 @@ export default function Dashboard() {
       },
     },
   });
-
-  const running = state?.running ?? false;
 
   const chartData = history?.map(h => ({
     tick: h.tick,
@@ -167,10 +173,10 @@ export default function Dashboard() {
 
       {chartData.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ChartCard title="Среднее настроение" data={chartData} dataKey="mood" color="hsl(43,100%,50%)" domain={[0, 100]} />
-          <ChartCard title="ВВП (тыс. ед.)" data={chartData} dataKey="gdp" color="hsl(173,80%,40%)" />
-          <ChartCard title="Население" data={chartData} dataKey="population" color="hsl(210,100%,50%)" />
-          <ChartCard title="Среднее богатство" data={chartData} dataKey="wealth" color="hsl(280,80%,60%)" />
+          <ChartCard title="Среднее настроение" data={chartData} dataKey="mood" color="hsl(43,100%,50%)" domain={[0, 100]} running={running} />
+          <ChartCard title="ВВП (тыс. ед.)" data={chartData} dataKey="gdp" color="hsl(173,80%,40%)" running={running} />
+          <ChartCard title="Население" data={chartData} dataKey="population" color="hsl(210,100%,50%)" running={running} />
+          <ChartCard title="Среднее богатство" data={chartData} dataKey="wealth" color="hsl(280,80%,60%)" running={running} />
         </div>
       )}
 
@@ -185,16 +191,25 @@ export default function Dashboard() {
   );
 }
 
-function ChartCard({ title, data, dataKey, color, domain }: {
+function ChartCard({ title, data, dataKey, color, domain, running }: {
   title: string;
   data: Record<string, number>[];
   dataKey: string;
   color: string;
   domain?: [number, number];
+  running: boolean;
 }) {
   return (
     <div className="bg-card border border-card-border rounded p-4">
-      <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-3">{title}</h3>
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">{title}</h3>
+        {running && (
+          <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border border-[hsl(173,80%,40%)]/25">
+            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(173,80%,40%)] animate-pulse inline-block" />
+            LIVE
+          </span>
+        )}
+      </div>
       <ResponsiveContainer width="100%" height={120}>
         <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(225,10%,20%)" />
@@ -204,10 +219,18 @@ function ChartCard({ title, data, dataKey, color, domain }: {
             contentStyle={{ background: "hsl(225,15%,7%)", border: "1px solid hsl(225,10%,20%)", borderRadius: 4, fontSize: 11 }}
             labelStyle={{ color: "hsl(210,20%,90%)" }}
           />
-          <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5} dot={false} />
+          <Line
+            type="monotone"
+            dataKey={dataKey}
+            stroke={color}
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={true}
+            animationDuration={600}
+            animationEasing="ease-out"
+          />
         </LineChart>
       </ResponsiveContainer>
     </div>
   );
 }
-
