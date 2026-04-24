@@ -9,15 +9,20 @@ import {
   getGetStatsHistoryQueryKey,
   getGetStatsSummaryQueryKey,
   useGetStatsSummary,
+  useGetTopAgents,
+  getGetTopAgentsQueryKey,
+  type Agent,
 } from "@workspace/api-client-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { Play, Square, RotateCcw, Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark } from "lucide-react";
+import { Play, Square, RotateCcw, Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Smile } from "lucide-react";
 import StatCard from "@/components/stat-card";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 export default function Dashboard() {
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
 
   const { data: state, isLoading } = useGetSimulationState({
     query: {
@@ -38,6 +43,13 @@ export default function Dashboard() {
   const { data: summary } = useGetStatsSummary({
     query: {
       queryKey: getGetStatsSummaryQueryKey(),
+      refetchInterval: running ? 7000 : 30000,
+    },
+  });
+
+  const { data: topAgents } = useGetTopAgents({
+    query: {
+      queryKey: getGetTopAgentsQueryKey(),
       refetchInterval: running ? 7000 : 30000,
     },
   });
@@ -171,6 +183,29 @@ export default function Dashboard() {
         </div>
       )}
 
+      {topAgents && (topAgents.byWealth.length > 0 || topAgents.byMood.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <LeaderboardCard
+            title="Богатейшие жители"
+            icon={Trophy}
+            entries={topAgents.byWealth}
+            valueLabel="Средства"
+            getValue={(a) => `${Math.round(a.money).toLocaleString()}`}
+            running={running}
+            onRowClick={(id) => navigate(`/agents/${id}`)}
+          />
+          <LeaderboardCard
+            title="Счастливейшие жители"
+            icon={Smile}
+            entries={topAgents.byMood}
+            valueLabel="Настроение"
+            getValue={(a) => `${a.mood.toFixed(1)}`}
+            running={running}
+            onRowClick={(id) => navigate(`/agents/${id}`)}
+          />
+        </div>
+      )}
+
       {chartData.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <ChartCard title="Среднее настроение" data={chartData} dataKey="mood" color="hsl(43,100%,50%)" domain={[0, 100]} running={running} />
@@ -231,6 +266,56 @@ function ChartCard({ title, data, dataKey, color, domain, running }: {
           />
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+function LeaderboardCard({ title, icon: Icon, entries, valueLabel, getValue, running, onRowClick }: {
+  title: string;
+  icon: React.ElementType;
+  entries: Agent[];
+  valueLabel: string;
+  getValue: (a: Agent) => string;
+  running: boolean;
+  onRowClick: (id: number) => void;
+}) {
+  const medalColors = ["hsl(43,100%,50%)", "hsl(210,10%,70%)", "hsl(30,80%,50%)"];
+
+  return (
+    <div className="bg-card border border-card-border rounded p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+        <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">{title}</h3>
+        {running && (
+          <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wider bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border border-[hsl(173,80%,40%)]/25">
+            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(173,80%,40%)] animate-pulse inline-block" />
+            LIVE
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-muted-foreground">{valueLabel}</span>
+      </div>
+      <ol className="space-y-1">
+        {entries.map((agent, i) => (
+          <li key={agent.id}>
+            <button
+              onClick={() => onRowClick(agent.id)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 transition-colors text-left group"
+            >
+              <span
+                className="w-4 text-center text-[10px] font-bold shrink-0"
+                style={{ color: i < 3 ? medalColors[i] : "hsl(210,10%,50%)" }}
+              >
+                {i + 1}
+              </span>
+              <span className="flex-1 text-xs text-foreground group-hover:text-primary truncate">
+                {agent.name}
+              </span>
+              <span className="text-[10px] text-muted-foreground shrink-0">{agent.age} л.</span>
+              <span className="text-xs font-medium text-foreground shrink-0 tabular-nums">{getValue(agent)}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
