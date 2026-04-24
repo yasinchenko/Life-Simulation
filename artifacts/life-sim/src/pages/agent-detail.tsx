@@ -4,8 +4,9 @@ import {
   getGetAgentQueryKey,
   type AgentDetail,
   type AgentRelation,
+  type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -120,15 +121,25 @@ export default function AgentDetailPage() {
         <NeedsBar label="Общение" value={agent.needs.social} icon={Users} color="hsl(280,80%,60%)" />
       </div>
 
-      {agent.employerId != null && (
-        <div className="bg-card border border-card-border rounded p-4">
-          <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-2">Работа</h2>
+      <div className="bg-card border border-card-border rounded p-4">
+        <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-2">Работа</h2>
+        {agent.isRetired ? (
+          <div className="flex items-center gap-2 text-xs">
+            <Sunset className="w-3.5 h-3.5 text-[hsl(43,100%,50%)]" />
+            <span className="text-[hsl(43,100%,50%)] font-medium">На пенсии</span>
+          </div>
+        ) : agent.employerId != null ? (
           <div className="flex items-center gap-2 text-xs">
             <Briefcase className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-foreground">Бизнес #{agent.employerId}</span>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="flex items-center gap-2 text-xs">
+            <Briefcase className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground">Безработный</span>
+          </div>
+        )}
+      </div>
 
       {agent.recentActions && agent.recentActions.length > 0 && (
         <div className="bg-card border border-card-border rounded p-4">
@@ -149,6 +160,42 @@ export default function AgentDetailPage() {
                 {ACTION_LABELS[action] ?? action}
               </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {agent.jobHistory && agent.jobHistory.length > 0 && (
+        <div className="bg-card border border-card-border rounded p-4">
+          <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-3">
+            История работы ({agent.jobHistory.length})
+          </h2>
+          <div className="space-y-2">
+            {agent.jobHistory.map((entry: JobHistoryEntry, i: number) => {
+              const isHired = entry.event === "hired";
+              const isFired = entry.event === "fired";
+              const isRetiredEvent = entry.event === "retired";
+              return (
+                <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border/50 last:border-0">
+                  <div className="flex items-center gap-2">
+                    {isHired && <LogIn className="w-3 h-3 text-[hsl(173,80%,40%)] shrink-0" />}
+                    {isFired && <LogOut className="w-3 h-3 text-destructive shrink-0" />}
+                    {isRetiredEvent && <Sunset className="w-3 h-3 text-[hsl(43,100%,50%)] shrink-0" />}
+                    <span className={cn(
+                      "font-medium",
+                      isHired && "text-[hsl(173,80%,40%)]",
+                      isFired && "text-destructive",
+                      isRetiredEvent && "text-[hsl(43,100%,50%)]",
+                    )}>
+                      {isHired ? "Нанят" : isFired ? "Уволен" : "Выход на пенсию"}
+                    </span>
+                    {entry.businessName && (
+                      <span className="text-muted-foreground">· {entry.businessName}</span>
+                    )}
+                  </div>
+                  <span className="text-muted-foreground tabular-nums text-[10px]">тик {entry.tick}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

@@ -45,10 +45,18 @@ const DEFAULT_CONFIG: SimulationConfig = {
 const AGENT_SORT_KEYS = ["name", "age", "mood", "money", "currentAction"] as const;
 type AgentSortKey = typeof AGENT_SORT_KEYS[number];
 
+interface JobHistoryEntry {
+  tick: number;
+  event: "hired" | "fired" | "retired";
+  businessId: number | null;
+  businessName: string | null;
+}
+
 interface AgentState extends Agent {
   needs: { hunger: number; comfort: number; social: number };
   needsId: number;
   recentActions: string[];
+  jobHistory: JobHistoryEntry[];
 }
 
 interface BusinessState extends Business {
@@ -213,7 +221,9 @@ class SimulationEngine {
     this.agents.clear();
     for (const agent of agentRows) {
       const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, id: 0 };
-      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social }, needsId: needs.id, recentActions: [] });
+      let jobHistory: JobHistoryEntry[] = [];
+      try { jobHistory = JSON.parse(agent.jobHistory ?? "[]"); } catch { jobHistory = []; }
+      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social }, needsId: needs.id, recentActions: [], jobHistory });
     }
   }
 
@@ -366,6 +376,7 @@ class SimulationEngine {
           needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social },
           needsId: needs.id,
           recentActions: [],
+          jobHistory: agent.employerId ? [{ tick: 0, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }] : [],
         });
         if (agent.employerId) {
           const biz = this.businesses.get(agent.employerId);
@@ -499,9 +510,47 @@ class SimulationEngine {
 
     const agentIds = Array.from(this.agents.keys());
 
+    const availableBusinessIds = Array.from(this.businesses.values())
+      .filter(b => b.balance > 0)
+      .map(b => b.id);
+
     for (const agentId of agentIds) {
       const agent = this.agents.get(agentId);
       if (!agent) continue;
+
+      // Retirement: agents at or above 65 who aren't yet retired
+      if (!agent.isRetired && agent.age >= 65) {
+        if (agent.employerId != null) {
+          const oldBiz = this.businesses.get(agent.employerId);
+          if (oldBiz) oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null }];
+          agent.employerId = null;
+        } else {
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
+        }
+        agent.isRetired = true;
+      }
+
+      // Firing: if employer's balance is below zero, fire this agent (50% chance to spread out firings)
+      if (!agent.isRetired && agent.employerId != null) {
+        const employer = this.businesses.get(agent.employerId);
+        if (employer && employer.balance < 0 && Math.random() < 0.5) {
+          employer.employeeCount = Math.max(0, employer.employeeCount - 1);
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: agent.employerId, businessName: employer.name }];
+          agent.employerId = null;
+        }
+      }
+
+      // Job seeking: unemployed, non-retired agents have a 15% chance to find work
+      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.15) {
+        const newBizId = pick(availableBusinessIds);
+        const newBiz = this.businesses.get(newBizId);
+        if (newBiz) {
+          agent.employerId = newBizId;
+          newBiz.employeeCount++;
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBizId, businessName: newBiz.name }];
+        }
+      }
 
       agent.needs.hunger = clamp(agent.needs.hunger - needDecayRate * rand(0.5, 1.5));
       agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
@@ -524,8 +573,8 @@ class SimulationEngine {
           }
           gdp += foodGood.currentPrice;
         } else if (!foodGood || agent.money < (foodGood?.currentPrice ?? 0)) {
-          agent.currentAction = "work";
           if (agent.employerId) {
+            agent.currentAction = "work";
             const salary = baseSalary * rand(0.8, 1.2);
             const tax = salary * taxRate;
             income = salary - tax;
@@ -534,6 +583,8 @@ class SimulationEngine {
             gdp += salary;
             const biz = this.businesses.get(agent.employerId);
             if (biz) biz.balance -= salary;
+          } else {
+            agent.currentAction = "idle";
           }
         }
       } else if (criticalNeed === "comfort") {
@@ -673,7 +724,14 @@ class SimulationEngine {
       const batch = agentArray.slice(i, i + BATCH_SIZE);
       for (const agent of batch) {
         await db.update(agentsTable)
-          .set({ mood: agent.mood, money: agent.money, currentAction: agent.currentAction })
+          .set({
+            mood: agent.mood,
+            money: agent.money,
+            currentAction: agent.currentAction,
+            employerId: agent.employerId,
+            isRetired: agent.isRetired,
+            jobHistory: JSON.stringify(agent.jobHistory.slice(-50)),
+          })
           .where(eq(agentsTable.id, agent.id));
         await db.update(needsTable)
           .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social })
@@ -827,7 +885,9 @@ class SimulationEngine {
       socialization: agent.socialization,
       currentAction: agent.currentAction,
       employerId: agent.employerId,
+      isRetired: agent.isRetired,
       recentActions: [...agent.recentActions],
+      jobHistory: [...agent.jobHistory].reverse().slice(0, 20),
       needs: {
         hunger: Math.round(agent.needs.hunger * 10) / 10,
         comfort: Math.round(agent.needs.comfort * 10) / 10,

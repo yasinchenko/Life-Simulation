@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, real, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, real, boolean, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -13,6 +13,8 @@ export const agentsTable = pgTable("agents", {
   socialization: real("socialization").notNull().default(50),
   currentAction: text("current_action").notNull().default("idle"),
   employerId: integer("employer_id"),
+  isRetired: boolean("is_retired").notNull().default(false),
+  jobHistory: text("job_history").notNull().default("[]"),
   locationX: real("location_x").notNull().default(0),
   locationY: real("location_y").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

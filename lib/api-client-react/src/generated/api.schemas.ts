@@ -49,11 +49,24 @@ export interface AgentRelation {
   friendshipLevel: number;
 }
 
+export interface JobHistoryEntry {
+  tick: number;
+  event: 'hired' | 'fired' | 'retired';
+  /** @nullable */
+  businessId: number | null;
+  /** @nullable */
+  businessName: string | null;
+}
+
 export type AgentDetail = Agent & {
   needs: AgentNeeds;
   relations: AgentRelation[];
   /** Last 10 actions taken by this agent */
   recentActions: string[];
+  /** Whether this agent has retired */
+  isRetired: boolean;
+  /** Most recent 20 job events for this agent */
+  jobHistory: JobHistoryEntry[];
 };
 
 export interface AgentListResponse {

@@ -9,9 +9,20 @@ import type { Agent } from './agent';
 import type { AgentNeeds } from './agentNeeds';
 import type { AgentRelation } from './agentRelation';
 
+export interface JobHistoryEntry {
+  tick: number;
+  event: 'hired' | 'fired' | 'retired';
+  businessId: number | null;
+  businessName: string | null;
+}
+
 export type AgentDetail = Agent & {
   needs: AgentNeeds;
   relations: AgentRelation[];
   /** Last 10 actions taken by this agent */
   recentActions: string[];
+  /** Whether this agent has retired */
+  isRetired: boolean;
+  /** Most recent 20 job events for this agent */
+  jobHistory: JobHistoryEntry[];
 };

@@ -383,6 +383,24 @@ components:
         - otherName
         - friendshipLevel
 
+    JobHistoryEntry:
+      type: object
+      properties:
+        tick:
+          type: integer
+        event:
+          type: string
+          enum: [hired, fired, retired]
+        businessId:
+          type: ["integer", "null"]
+        businessName:
+          type: ["string", "null"]
+      required:
+        - tick
+        - event
+        - businessId
+        - businessName
+
     AgentDetail:
       allOf:
         - $ref: "#/components/schemas/Agent"
@@ -399,10 +417,20 @@ components:
               items:
                 type: string
               description: Last 10 actions taken by this agent
+            isRetired:
+              type: boolean
+              description: Whether this agent has retired
+            jobHistory:
+              type: array
+              items:
+                $ref: "#/components/schemas/JobHistoryEntry"
+              description: Most recent 20 job events for this agent
           required:
             - needs
             - relations
             - recentActions
+            - isRetired
+            - jobHistory
 
     AgentListResponse:
       type: object

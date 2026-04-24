@@ -151,7 +151,14 @@ export const GetAgentResponse = zod.object({
   "otherName": zod.string(),
   "friendshipLevel": zod.number()
 })),
-  "recentActions": zod.array(zod.string()).describe('Last 10 actions taken by this agent')
+  "recentActions": zod.array(zod.string()).describe('Last 10 actions taken by this agent'),
+  "isRetired": zod.boolean().describe('Whether this agent has retired'),
+  "jobHistory": zod.array(zod.object({
+    "tick": zod.number(),
+    "event": zod.enum(["hired", "fired", "retired"]),
+    "businessId": zod.number().nullable(),
+    "businessName": zod.string().nullable(),
+  })).describe('Most recent 20 job events for this agent')
 }))
 
 
