@@ -17,4 +17,5 @@ export interface SimConfigUpdate {
   subsidyAmount?: number;
   socialInteractionStrength?: number;
   priceMarkup?: number;
+  pensionRate?: number;
 }

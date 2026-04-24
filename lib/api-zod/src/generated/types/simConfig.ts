@@ -27,4 +27,6 @@ export interface SimConfig {
   socialInteractionStrength: number;
   /** Business markup on top of base price (0.0 - 1.0) */
   priceMarkup: number;
+  /** Pension as a fraction of baseSalary paid to retirees per tick (0.0 - 1.0) */
+  pensionRate: number;
 }

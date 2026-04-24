@@ -102,8 +102,10 @@ export interface GovernmentState {
   budget: number;
   totalTaxCollected: number;
   totalSubsidiesPaid: number;
+  totalPensionPaid: number;
   taxRate: number;
   subsidyAmount: number;
+  pensionRate: number;
 }
 
 export interface SimConfig {
@@ -127,6 +129,8 @@ export interface SimConfig {
   socialInteractionStrength: number;
   /** Business markup on top of base price (0.0 - 1.0) */
   priceMarkup: number;
+  /** Pension as a fraction of baseSalary paid to retirees per tick (0.0 - 1.0) */
+  pensionRate: number;
 }
 
 export interface SimConfigUpdate {
@@ -140,6 +144,7 @@ export interface SimConfigUpdate {
   subsidyAmount?: number;
   socialInteractionStrength?: number;
   priceMarkup?: number;
+  pensionRate?: number;
 }
 
 export interface StatsSnapshot {

@@ -2,7 +2,7 @@ import {
   useGetGovernment,
   getGetGovernmentQueryKey,
 } from "@workspace/api-client-react";
-import { Landmark, TrendingDown, TrendingUp, Percent } from "lucide-react";
+import { Landmark, TrendingDown, TrendingUp, Percent, ShieldCheck } from "lucide-react";
 import StatCard from "@/components/stat-card";
 
 export default function GovernmentPage() {
@@ -19,7 +19,7 @@ export default function GovernmentPage() {
 
       {isLoading ? (
         <div className="grid grid-cols-2 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
+          {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-24 bg-card border border-card-border rounded animate-pulse" />
           ))}
         </div>
@@ -48,6 +48,13 @@ export default function GovernmentPage() {
               accent="crimson"
             />
             <StatCard
+              label="Пенсии выплачено"
+              value={gov.totalPensionPaid.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              sub="за всё время"
+              icon={ShieldCheck}
+              accent="amber"
+            />
+            <StatCard
               label="Ставка налога"
               value={`${(gov.taxRate * 100).toFixed(1)}%`}
               sub={`от дохода агентов`}
@@ -69,6 +76,11 @@ export default function GovernmentPage() {
                 <p className="font-medium text-foreground text-base">{(gov.taxRate * 100).toFixed(1)}%</p>
                 <p className="text-[10px] text-muted-foreground">удерживается с каждой зарплаты</p>
               </div>
+              <div className="space-y-1">
+                <p className="text-muted-foreground">Пенсионная ставка</p>
+                <p className="font-medium text-foreground text-base">{(gov.pensionRate * 100).toFixed(0)}%</p>
+                <p className="text-[10px] text-muted-foreground">от базовой зарплаты выплачивается пенсионерам за тик</p>
+              </div>
             </div>
           </div>
 
@@ -82,6 +94,10 @@ export default function GovernmentPage() {
               <div className="flex justify-between py-1 border-b border-border/50">
                 <span className="text-muted-foreground">Выплачено субсидий</span>
                 <span className="text-[hsl(348,83%,47%)] tabular-nums">-{gov.totalSubsidiesPaid.toFixed(0)}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-border/50">
+                <span className="text-muted-foreground">Выплачено пенсий</span>
+                <span className="text-[hsl(348,83%,47%)] tabular-nums">-{gov.totalPensionPaid.toFixed(0)}</span>
               </div>
               <div className="flex justify-between py-1">
                 <span className="font-medium text-foreground">Итого бюджет</span>
@@ -98,4 +114,3 @@ export default function GovernmentPage() {
     </div>
   );
 }
-

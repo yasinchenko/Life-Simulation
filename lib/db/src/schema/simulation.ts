@@ -11,6 +11,7 @@ export const simStateTable = pgTable("sim_state", {
   governmentBudget: real("government_budget").notNull().default(10000),
   totalTaxCollected: real("total_tax_collected").notNull().default(0),
   totalSubsidiesPaid: real("total_subsidies_paid").notNull().default(0),
+  totalPensionPaid: real("total_pension_paid").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

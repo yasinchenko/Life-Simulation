@@ -117,6 +117,15 @@ const FIELDS: SettingField[] = [
     step: 0.05,
     format: v => `${(v * 100).toFixed(0)}%`,
   },
+  {
+    key: "pensionRate",
+    label: "Пенсионная ставка",
+    description: "Доля базовой зарплаты, выплачиваемая пенсионерам от государства за каждый тик",
+    min: 0,
+    max: 1,
+    step: 0.05,
+    format: v => `${(v * 100).toFixed(0)}%`,
+  },
 ];
 
 function AdminLoginGate({ onSuccess }: { onSuccess: () => void }) {
@@ -216,6 +225,7 @@ export default function SettingsPage() {
         subsidyAmount: config.subsidyAmount,
         socialInteractionStrength: config.socialInteractionStrength,
         priceMarkup: config.priceMarkup,
+        pensionRate: config.pensionRate,
       });
       setDirty(false);
     }

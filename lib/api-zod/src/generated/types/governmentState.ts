@@ -10,6 +10,8 @@ export interface GovernmentState {
   budget: number;
   totalTaxCollected: number;
   totalSubsidiesPaid: number;
+  totalPensionPaid: number;
   taxRate: number;
   subsidyAmount: number;
+  pensionRate: number;
 }

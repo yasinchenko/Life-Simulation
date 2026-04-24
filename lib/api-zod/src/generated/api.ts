@@ -199,8 +199,10 @@ export const GetGovernmentResponse = zod.object({
   "budget": zod.number(),
   "totalTaxCollected": zod.number(),
   "totalSubsidiesPaid": zod.number(),
+  "totalPensionPaid": zod.number(),
   "taxRate": zod.number(),
-  "subsidyAmount": zod.number()
+  "subsidyAmount": zod.number(),
+  "pensionRate": zod.number()
 })
 
 
@@ -217,7 +219,8 @@ export const GetConfigResponse = zod.object({
   "baseSalary": zod.number().describe('Base salary per tick for employed agents'),
   "subsidyAmount": zod.number().describe('Amount paid to agents with no money'),
   "socialInteractionStrength": zod.number().describe('How much social interactions affect mood (0.0-10.0)'),
-  "priceMarkup": zod.number().describe('Business markup on top of base price (0.0 - 1.0)')
+  "priceMarkup": zod.number().describe('Business markup on top of base price (0.0 - 1.0)'),
+  "pensionRate": zod.number().describe('Pension as a fraction of baseSalary paid to retirees per tick (0.0 - 1.0)')
 })
 
 
@@ -234,7 +237,8 @@ export const UpdateConfigBody = zod.object({
   "baseSalary": zod.number().optional(),
   "subsidyAmount": zod.number().optional(),
   "socialInteractionStrength": zod.number().optional(),
-  "priceMarkup": zod.number().optional()
+  "priceMarkup": zod.number().optional(),
+  "pensionRate": zod.number().optional()
 })
 
 export const UpdateConfigResponse = zod.object({
@@ -247,7 +251,8 @@ export const UpdateConfigResponse = zod.object({
   "baseSalary": zod.number().describe('Base salary per tick for employed agents'),
   "subsidyAmount": zod.number().describe('Amount paid to agents with no money'),
   "socialInteractionStrength": zod.number().describe('How much social interactions affect mood (0.0-10.0)'),
-  "priceMarkup": zod.number().describe('Business markup on top of base price (0.0 - 1.0)')
+  "priceMarkup": zod.number().describe('Business markup on top of base price (0.0 - 1.0)'),
+  "pensionRate": zod.number().describe('Pension as a fraction of baseSalary paid to retirees per tick (0.0 - 1.0)')
 })
 
 

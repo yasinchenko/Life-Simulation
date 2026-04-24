@@ -27,6 +27,7 @@ export interface SimulationConfig {
   subsidyAmount: number;
   socialInteractionStrength: number;
   priceMarkup: number;
+  pensionRate: number;
 }
 
 const DEFAULT_CONFIG: SimulationConfig = {
@@ -40,6 +41,7 @@ const DEFAULT_CONFIG: SimulationConfig = {
   subsidyAmount: 20,
   socialInteractionStrength: 2,
   priceMarkup: 0.2,
+  pensionRate: 0.6,
 };
 
 const AGENT_SORT_KEYS = ["name", "age", "mood", "money", "currentAction"] as const;
@@ -73,6 +75,7 @@ interface SimState {
   governmentBudget: number;
   totalTaxCollected: number;
   totalSubsidiesPaid: number;
+  totalPensionPaid: number;
 }
 
 const MALE_NAMES = [
@@ -125,6 +128,7 @@ class SimulationEngine {
     governmentBudget: 10000,
     totalTaxCollected: 0,
     totalSubsidiesPaid: 0,
+    totalPensionPaid: 0,
   };
   private config: SimulationConfig = { ...DEFAULT_CONFIG };
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -174,6 +178,7 @@ class SimulationEngine {
       subsidyAmount: parseFloat(configMap.subsidyAmount ?? String(DEFAULT_CONFIG.subsidyAmount)),
       socialInteractionStrength: parseFloat(configMap.socialInteractionStrength ?? String(DEFAULT_CONFIG.socialInteractionStrength)),
       priceMarkup: parseFloat(configMap.priceMarkup ?? String(DEFAULT_CONFIG.priceMarkup)),
+      pensionRate: parseFloat(configMap.pensionRate ?? String(DEFAULT_CONFIG.pensionRate)),
     };
   }
 
@@ -197,6 +202,7 @@ class SimulationEngine {
         governmentBudget: row.governmentBudget,
         totalTaxCollected: row.totalTaxCollected,
         totalSubsidiesPaid: row.totalSubsidiesPaid,
+        totalPensionPaid: row.totalPensionPaid,
       };
     } else {
       await db.insert(simStateTable).values({
@@ -207,6 +213,7 @@ class SimulationEngine {
         governmentBudget: 10000,
         totalTaxCollected: 0,
         totalSubsidiesPaid: 0,
+        totalPensionPaid: 0,
       });
     }
   }
@@ -461,6 +468,7 @@ class SimulationEngine {
       governmentBudget: 10000,
       totalTaxCollected: 0,
       totalSubsidiesPaid: 0,
+      totalPensionPaid: 0,
     };
     await this.persistState();
     await this.generatePopulation();
@@ -502,11 +510,12 @@ class SimulationEngine {
     this.state.gameHour = (this.state.gameHour + 1) % 24;
     if (this.state.gameHour === 0) this.state.gameDay++;
 
-    const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength } = this.config;
+    const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength, pensionRate } = this.config;
 
     let gdp = 0;
     let taxRevenue = 0;
     let subsidiesPaid = 0;
+    let pensionPaid = 0;
 
     const agentIds = Array.from(this.agents.keys());
 
@@ -534,6 +543,13 @@ class SimulationEngine {
           agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
         }
         agent.isRetired = true;
+      }
+
+      // Pension: retired agents receive a fixed pension each tick, funded by government
+      if (agent.isRetired) {
+        const pensionAmount = baseSalary * pensionRate;
+        agent.money += pensionAmount;
+        pensionPaid += pensionAmount;
       }
 
       // Firing: if employer's balance is below zero, fire this agent (50% chance to spread out firings)
@@ -649,9 +665,10 @@ class SimulationEngine {
       if (agent.recentActions.length > 10) agent.recentActions.shift();
     }
 
-    this.state.governmentBudget += taxRevenue - subsidiesPaid;
+    this.state.governmentBudget += taxRevenue - subsidiesPaid - pensionPaid;
     this.state.totalTaxCollected += taxRevenue;
     this.state.totalSubsidiesPaid += subsidiesPaid;
+    this.state.totalPensionPaid += pensionPaid;
 
     this.updateGoodPrices();
     this.updateBusinesses();
@@ -807,6 +824,7 @@ class SimulationEngine {
         governmentBudget: this.state.governmentBudget,
         totalTaxCollected: this.state.totalTaxCollected,
         totalSubsidiesPaid: this.state.totalSubsidiesPaid,
+        totalPensionPaid: this.state.totalPensionPaid,
         updatedAt: new Date(),
       }).where(eq(simStateTable.id, existing.id));
     }
@@ -947,8 +965,10 @@ class SimulationEngine {
       budget: Math.round(this.state.governmentBudget * 100) / 100,
       totalTaxCollected: Math.round(this.state.totalTaxCollected * 100) / 100,
       totalSubsidiesPaid: Math.round(this.state.totalSubsidiesPaid * 100) / 100,
+      totalPensionPaid: Math.round(this.state.totalPensionPaid * 100) / 100,
       taxRate: this.config.taxRate,
       subsidyAmount: this.config.subsidyAmount,
+      pensionRate: this.config.pensionRate,
     };
   }
 

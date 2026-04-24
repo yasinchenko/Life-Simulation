@@ -514,16 +514,23 @@ components:
           type: number
         totalSubsidiesPaid:
           type: number
+        totalPensionPaid:
+          type: number
         taxRate:
           type: number
         subsidyAmount:
           type: number
+        pensionRate:
+          type: number
+          description: Pension as a fraction of baseSalary paid to retirees per tick (0.0 - 1.0)
       required:
         - budget
         - totalTaxCollected
         - totalSubsidiesPaid
+        - totalPensionPaid
         - taxRate
         - subsidyAmount
+        - pensionRate
 
     SimConfig:
       type: object
@@ -558,6 +565,9 @@ components:
         priceMarkup:
           type: number
           description: Business markup on top of base price (0.0 - 1.0)
+        pensionRate:
+          type: number
+          description: Pension as a fraction of baseSalary paid to retirees per tick (0.0 - 1.0)
       required:
         - taxRate
         - needDecayRate
@@ -569,6 +579,7 @@ components:
         - subsidyAmount
         - socialInteractionStrength
         - priceMarkup
+        - pensionRate
 
     SimConfigUpdate:
       type: object
@@ -592,6 +603,8 @@ components:
         socialInteractionStrength:
           type: number
         priceMarkup:
+          type: number
+        pensionRate:
           type: number
 
     StatsSnapshot:

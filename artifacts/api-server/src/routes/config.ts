@@ -44,6 +44,9 @@ router.put("/config", requireAdmin, async (req, res): Promise<void> => {
   if (data.priceMarkup !== undefined && (data.priceMarkup < 0 || data.priceMarkup > 1)) {
     rangeErrors.push("priceMarkup must be between 0 and 1");
   }
+  if (data.pensionRate !== undefined && (data.pensionRate < 0 || data.pensionRate > 1)) {
+    rangeErrors.push("pensionRate must be between 0 and 1");
+  }
   if (data.baseFoodPrice !== undefined && data.baseFoodPrice <= 0) {
     rangeErrors.push("baseFoodPrice must be positive");
   }
