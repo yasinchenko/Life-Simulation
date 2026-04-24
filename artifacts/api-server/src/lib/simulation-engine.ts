@@ -124,6 +124,58 @@ interface AgentStatSnapshot {
   socialization: number;
 }
 
+export interface TickDebugReport {
+  tick: number;
+  elapsedMs: number;
+  computedAt: number;
+  agents: {
+    processed: number;
+    skipped: number;
+    actions: { work: number; eat: number; rest: number; socialize: number; idle: number };
+    moneyIn: number;
+    moneyOut: number;
+  };
+  businesses: {
+    total: number;
+    active: number;
+    unprofitable: number;
+    staffless: number;
+    employed: number;
+    hired: number;
+    fired: number;
+    balanceBefore: number;
+    balanceAfter: number;
+    wagesPaid: number;
+  };
+  government: {
+    budgetBefore: number;
+    budgetAfter: number;
+    taxRevenue: number;
+    pensionsPaid: number;
+    subsidiesPaid: number;
+    pensionRecipients: number;
+    subsidyRecipients: number;
+  };
+  market: {
+    totalDemand: number;
+    totalSupply: number;
+    avgPrice: number;
+    priceChangePct: number;
+    bigPriceSpikes: number;
+    successfulPurchases: number;
+    failedNoGoods: number;
+    failedNoMoney: number;
+  };
+  integrity: {
+    negativeMoneyAgents: number;
+    nanValues: number;
+    totalMoneyAgents: number;
+    totalMoneyBusinesses: number;
+    governmentBudget: number;
+    orphanedGoods: number;
+  };
+}
+
 class SimulationEngine {
   private agents: Map<number, AgentState> = new Map();
   private businesses: Map<number, BusinessState> = new Map();
@@ -149,6 +201,8 @@ class SimulationEngine {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private isTicking = false;
   private syncCounter = 0;
+  private lastTickReport: TickDebugReport | null = null;
+  private prevAvgPrice = 0;
 
   async initialize(): Promise<void> {
     logger.info("Initializing simulation engine...");
@@ -584,6 +638,14 @@ class SimulationEngine {
     let pensionPaid = 0;
     let runningBudget = this.state.governmentBudget;
 
+    const dbgBudgetBefore = runningBudget;
+    const dbgBizBalanceBefore = Array.from(this.businesses.values()).reduce((s, b) => s + b.balance, 0);
+    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0;
+    let dbgMoneyIn = 0, dbgMoneyOut = 0, dbgWagesPaid = 0;
+    let dbgSuccessful = 0, dbgFailedNoGoods = 0, dbgFailedNoMoney = 0;
+    let dbgPensionRecipients = 0, dbgSubsidyRecipients = 0;
+    let dbgSkipped = 0;
+
     const agentIds = Array.from(this.agents.keys());
 
     const availableBusinessIds = Array.from(this.businesses.values())
@@ -616,6 +678,7 @@ class SimulationEngine {
           const deathChance = Math.min((agent.age - 64) * 0.005, 0.5);
           if (Math.random() < deathChance) {
             dailyDeaths.push(agentId);
+            dbgSkipped++;
             continue; // skip all further processing for this agent
           }
         }
@@ -628,6 +691,8 @@ class SimulationEngine {
           agent.money += pensionAmount;
           pensionPaid += pensionAmount;
           runningBudget -= pensionAmount;
+          dbgPensionRecipients++;
+          dbgMoneyIn += pensionAmount;
         }
       }
 
@@ -674,7 +739,11 @@ class SimulationEngine {
             if (biz) biz.balance += foodGood.currentPrice;
           }
           gdp += foodGood.currentPrice;
+          dbgMoneyOut += foodGood.currentPrice;
+          dbgSuccessful++;
         } else if (!foodGood || agent.money < (foodGood?.currentPrice ?? 0)) {
+          if (!foodGood) dbgFailedNoGoods++;
+          else dbgFailedNoMoney++;
           if (agent.employerId) {
             agent.currentAction = "work";
             const salary = baseSalary * rand(0.8, 1.2);
@@ -686,6 +755,8 @@ class SimulationEngine {
             gdp += salary;
             const biz = this.businesses.get(agent.employerId);
             if (biz) biz.balance -= salary;
+            dbgMoneyIn += income;
+            dbgWagesPaid += salary;
           } else {
             agent.currentAction = "idle";
           }
@@ -697,6 +768,7 @@ class SimulationEngine {
         if (serviceGood && agent.money >= serviceGood.currentPrice * 0.5) {
           agent.money -= serviceGood.currentPrice * 0.5;
           serviceGood.demand = clamp(serviceGood.demand + 0.5, 0, 200);
+          dbgMoneyOut += serviceGood.currentPrice * 0.5;
         }
       } else if (criticalNeed === "social") {
         const partnerId = this.pickSocialPartner(agentId, agentIds);
@@ -726,6 +798,8 @@ class SimulationEngine {
           const biz = this.businesses.get(agent.employerId);
           if (biz) biz.balance -= salary;
           agent.currentAction = "work";
+          dbgMoneyIn += income;
+          dbgWagesPaid += salary;
         } else {
           agent.currentAction = "idle";
         }
@@ -743,7 +817,16 @@ class SimulationEngine {
         agent.money += subsidyAmount;
         subsidiesPaid += subsidyAmount;
         runningBudget -= subsidyAmount;
+        dbgSubsidyRecipients++;
       }
+
+      // Count action for debug report
+      const act = agent.currentAction;
+      if (act === "work") dbgActWork++;
+      else if (act === "eat") dbgActEat++;
+      else if (act === "rest") dbgActRest++;
+      else if (act === "socialize") dbgActSocialize++;
+      else dbgActIdle++;
 
       // Track recent actions (keep last 10)
       agent.recentActions.push(agent.currentAction);
@@ -783,11 +866,91 @@ class SimulationEngine {
       }
     }
 
+    const prevGoodPrices = new Map(Array.from(this.goods.entries()).map(([id, g]) => [id, g.currentPrice]));
     this.updateGoodPrices();
     this.updateBusinesses();
 
     const elapsed = Date.now() - startTime;
     logger.debug({ tick: this.state.tick, elapsed, agentCount: this.agents.size }, "Tick complete");
+
+    // Compute tick debug report
+    {
+      const goodsArr = Array.from(this.goods.values());
+      const totalDemand = goodsArr.reduce((s, g) => s + g.demand, 0);
+      const totalSupply = goodsArr.reduce((s, g) => s + g.supply, 0);
+      const avgPrice = goodsArr.length > 0 ? goodsArr.reduce((s, g) => s + g.currentPrice, 0) / goodsArr.length : 0;
+      const priceChangePct = this.prevAvgPrice > 0 ? ((avgPrice - this.prevAvgPrice) / this.prevAvgPrice) * 100 : 0;
+      const bigPriceSpikes = goodsArr.filter(g => {
+        const prev = prevGoodPrices.get(g.id) ?? 0;
+        return prev > 0 && Math.abs(g.currentPrice - prev) / prev > 0.2;
+      }).length;
+      this.prevAvgPrice = avgPrice;
+
+      const bizArr = Array.from(this.businesses.values());
+      const bizBalanceAfter = bizArr.reduce((s, b) => s + b.balance, 0);
+      const totalHired = bizArr.reduce((s, b) => s + b.hiredThisTick, 0);
+      const totalFired = bizArr.reduce((s, b) => s + b.firedThisTick, 0);
+      const totalEmployed = bizArr.reduce((s, b) => s + b.employeeCount, 0);
+
+      const agentsArr = Array.from(this.agents.values());
+      const negativeMoneyAgents = agentsArr.filter(a => a.money < 0).length;
+      const nanValues = agentsArr.filter(a => !isFinite(a.money) || !isFinite(a.mood)).length;
+      const totalMoneyAgents = agentsArr.reduce((s, a) => s + a.money, 0);
+      const totalMoneyBusinesses = bizArr.reduce((s, b) => s + b.balance, 0);
+      const orphanedGoods = goodsArr.filter(g => g.businessId != null && !this.businesses.has(g.businessId)).length;
+
+      this.lastTickReport = {
+        tick: this.state.tick,
+        elapsedMs: elapsed,
+        computedAt: Date.now(),
+        agents: {
+          processed: agentIds.length - dbgSkipped,
+          skipped: dbgSkipped,
+          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, socialize: dbgActSocialize, idle: dbgActIdle },
+          moneyIn: Math.round(dbgMoneyIn),
+          moneyOut: Math.round(dbgMoneyOut),
+        },
+        businesses: {
+          total: bizArr.length,
+          active: bizArr.filter(b => b.balance > 0).length,
+          unprofitable: bizArr.filter(b => b.balance < 0).length,
+          staffless: bizArr.filter(b => b.employeeCount === 0).length,
+          employed: totalEmployed,
+          hired: totalHired,
+          fired: totalFired,
+          balanceBefore: Math.round(dbgBizBalanceBefore),
+          balanceAfter: Math.round(bizBalanceAfter),
+          wagesPaid: Math.round(dbgWagesPaid),
+        },
+        government: {
+          budgetBefore: Math.round(dbgBudgetBefore),
+          budgetAfter: Math.round(this.state.governmentBudget),
+          taxRevenue: Math.round(taxRevenue),
+          pensionsPaid: Math.round(pensionPaid),
+          subsidiesPaid: Math.round(subsidiesPaid),
+          pensionRecipients: dbgPensionRecipients,
+          subsidyRecipients: dbgSubsidyRecipients,
+        },
+        market: {
+          totalDemand: Math.round(totalDemand),
+          totalSupply: Math.round(totalSupply),
+          avgPrice: Math.round(avgPrice * 10) / 10,
+          priceChangePct: Math.round(priceChangePct * 10) / 10,
+          bigPriceSpikes,
+          successfulPurchases: dbgSuccessful,
+          failedNoGoods: dbgFailedNoGoods,
+          failedNoMoney: dbgFailedNoMoney,
+        },
+        integrity: {
+          negativeMoneyAgents,
+          nanValues,
+          totalMoneyAgents: Math.round(totalMoneyAgents),
+          totalMoneyBusinesses: Math.round(totalMoneyBusinesses),
+          governmentBudget: Math.round(this.state.governmentBudget),
+          orphanedGoods,
+        },
+      };
+    }
 
     this.syncCounter++;
     if (this.syncCounter >= 1) {
@@ -1065,6 +1228,10 @@ class SimulationEngine {
       totalTaxCollected: Math.round(this.state.totalTaxCollected * 100) / 100,
       avgWealth: Math.round(avgWealth * 100) / 100,
     };
+  }
+
+  getLastTickReport(): TickDebugReport | null {
+    return this.lastTickReport;
   }
 
   getAgents(page: number, limit: number, sortBy?: string, sortDir?: string, filterAction?: string) {

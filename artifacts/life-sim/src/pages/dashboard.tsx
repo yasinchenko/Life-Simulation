@@ -16,6 +16,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 
 import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Trophy, Settings } from "lucide-react";
 import StatCard from "@/components/stat-card";
+import DebugPanel from "@/components/debug-panel";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { useLocation } from "wouter";
@@ -201,6 +202,8 @@ export default function Dashboard() {
           <p className="text-xs text-muted-foreground mt-1">Каждый тик = 1 игровой час = 1 минута реального времени</p>
         </div>
       )}
+
+      <DebugPanel running={running} />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import governmentRouter from "./government";
 import configRouter from "./config";
 import statsRouter from "./stats";
 import adminRouter from "./admin";
+import debugRouter from "./debug";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(economyRouter);
 router.use(governmentRouter);
 router.use(configRouter);
 router.use(statsRouter);
+router.use(debugRouter);
 
 export default router;
