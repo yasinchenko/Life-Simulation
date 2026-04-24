@@ -39,7 +39,7 @@ export default function AgentsPage() {
 
   const { data, isLoading } = useListAgents(
     { page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined },
-    { query: { queryKey: getListAgentsQueryKey({ page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined }), refetchInterval: 10000 } }
+    { query: { queryKey: getListAgentsQueryKey({ page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined }), refetchInterval: 60000 } }
   );
 
   const handleSort = (col: SortBy) => {

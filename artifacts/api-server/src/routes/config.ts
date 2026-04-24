@@ -19,7 +19,31 @@ router.put("/config", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const updated = await simulationEngine.updateConfig(parsed.data);
+  const data = parsed.data;
+  const rangeErrors: string[] = [];
+  if (data.taxRate !== undefined && (data.taxRate < 0 || data.taxRate > 1)) {
+    rangeErrors.push("taxRate must be between 0 and 1");
+  }
+  if (data.tickIntervalMs !== undefined && data.tickIntervalMs < 1000) {
+    rangeErrors.push("tickIntervalMs must be at least 1000 ms");
+  }
+  if (data.needDecayRate !== undefined && (data.needDecayRate < 0 || data.needDecayRate > 10)) {
+    rangeErrors.push("needDecayRate must be between 0 and 10");
+  }
+  if (data.subsidyAmount !== undefined && data.subsidyAmount < 0) {
+    rangeErrors.push("subsidyAmount must be non-negative");
+  }
+  if (data.baseSalary !== undefined && data.baseSalary < 0) {
+    rangeErrors.push("baseSalary must be non-negative");
+  }
+  if (data.socialInteractionStrength !== undefined && (data.socialInteractionStrength < 0 || data.socialInteractionStrength > 1)) {
+    rangeErrors.push("socialInteractionStrength must be between 0 and 1");
+  }
+  if (rangeErrors.length > 0) {
+    res.status(400).json({ error: rangeErrors.join("; ") });
+    return;
+  }
+  const updated = await simulationEngine.updateConfig(data);
   res.json(UpdateConfigResponse.parse(updated));
 });
 

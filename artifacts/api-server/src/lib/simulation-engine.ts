@@ -386,11 +386,11 @@ class SimulationEngine {
     }
     if (relationInserts.length > 0) {
       await db.insert(relationsTable).values(relationInserts);
-      // Load generated relations into memory
       for (const r of relationInserts) {
         let relMap = this.relations.get(r.agentIdA);
         if (!relMap) { relMap = new Map(); this.relations.set(r.agentIdA, relMap); }
         relMap.set(r.agentIdB, r.friendshipLevel);
+        this.persistedRelations.add(`${r.agentIdA}:${r.agentIdB}`);
       }
     }
 
