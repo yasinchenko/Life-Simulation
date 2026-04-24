@@ -296,7 +296,14 @@ export const GetStatsSummaryResponse = zod.object({
   "richestAgent": zod.string().optional(),
   "happiestAgent": zod.string().optional(),
   "mostPopularGood": zod.string().optional(),
-  "gdp": zod.number()
+  "gdp": zod.number(),
+  "birthsLastTick": zod.number(),
+  "deathsLastTick": zod.number(),
+  "profitableBusinesses": zod.number(),
+  "unprofitableBusinesses": zod.number(),
+  "marketBalance": zod.number(),
+  "totalDemand": zod.number(),
+  "totalSupply": zod.number()
 })
 
 

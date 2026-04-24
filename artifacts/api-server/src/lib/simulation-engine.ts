@@ -203,6 +203,8 @@ class SimulationEngine {
   private syncCounter = 0;
   private lastTickReport: TickDebugReport | null = null;
   private prevAvgPrice = 0;
+  private lastBirths = 0;
+  private lastDeaths = 0;
 
   async initialize(): Promise<void> {
     logger.info("Initializing simulation engine...");
@@ -856,13 +858,19 @@ class SimulationEngine {
           for (const relMap of this.relations.values()) relMap.delete(deadId);
           this.dirtyRelations.delete(`${deadId}:`);
         }
+        this.lastDeaths = dailyDeaths.length;
         await this.purgeDeadAgents(dailyDeaths);
         logger.info({ count: dailyDeaths.length, population: this.agents.size }, "Agents died");
+      } else if (isNewDay) {
+        this.lastDeaths = 0;
       }
 
       if (plannedBirths > 0) {
+        this.lastBirths = plannedBirths;
         await this.spawnNewAgents(plannedBirths);
         logger.info({ count: plannedBirths, population: this.agents.size }, "New agents born");
+      } else if (isNewDay) {
+        this.lastBirths = 0;
       }
     }
 
@@ -1450,6 +1458,13 @@ class SimulationEngine {
 
   getStatsSummary() {
     const agents = Array.from(this.agents.values());
+    const bizArr = Array.from(this.businesses.values());
+    const goodsArr = Array.from(this.goods.values());
+    const marketBalance = bizArr.reduce((s, b) => s + b.balance, 0);
+    const profitableBusinesses = bizArr.filter(b => b.balance > 0).length;
+    const unprofitableBusinesses = bizArr.filter(b => b.balance < 0).length;
+    const totalDemand = goodsArr.reduce((s, g) => s + g.demand, 0);
+    const totalSupply = goodsArr.reduce((s, g) => s + g.supply, 0);
     if (agents.length === 0) {
       return {
         totalAgents: 0,
@@ -1463,6 +1478,13 @@ class SimulationEngine {
         richestAgent: null,
         happiestAgent: null,
         mostPopularGood: null,
+        birthsLastTick: this.lastBirths,
+        deathsLastTick: this.lastDeaths,
+        profitableBusinesses,
+        unprofitableBusinesses,
+        marketBalance: Math.round(marketBalance),
+        totalDemand: Math.round(totalDemand),
+        totalSupply: Math.round(totalSupply),
       };
     }
     const employed = agents.filter(a => a.employerId != null);
@@ -1470,8 +1492,7 @@ class SimulationEngine {
     const avgWealth = agents.reduce((s, a) => s + a.money, 0) / agents.length;
     const richest = agents.reduce((max, a) => a.money > max.money ? a : max, agents[0]);
     const happiest = agents.reduce((max, a) => a.mood > max.mood ? a : max, agents[0]);
-    const goodsSorted = Array.from(this.goods.values()).sort((a, b) => b.demand - a.demand);
-    const gdp = Array.from(this.businesses.values()).reduce((s, b) => s + b.balance, 0);
+    const goodsSorted = [...goodsArr].sort((a, b) => b.demand - a.demand);
     return {
       totalAgents: agents.length,
       totalBusinesses: this.businesses.size,
@@ -1480,10 +1501,17 @@ class SimulationEngine {
       unemployedAgents: agents.length - employed.length,
       avgMood: Math.round(avgMood * 10) / 10,
       avgWealth: Math.round(avgWealth * 100) / 100,
-      gdp: Math.round(gdp),
+      gdp: Math.round(marketBalance),
       richestAgent: richest?.name ?? null,
       happiestAgent: happiest?.name ?? null,
       mostPopularGood: goodsSorted[0]?.name ?? null,
+      birthsLastTick: this.lastBirths,
+      deathsLastTick: this.lastDeaths,
+      profitableBusinesses,
+      unprofitableBusinesses,
+      marketBalance: Math.round(marketBalance),
+      totalDemand: Math.round(totalDemand),
+      totalSupply: Math.round(totalSupply),
     };
   }
 

@@ -676,6 +676,20 @@ components:
           type: string
         gdp:
           type: number
+        birthsLastTick:
+          type: integer
+        deathsLastTick:
+          type: integer
+        profitableBusinesses:
+          type: integer
+        unprofitableBusinesses:
+          type: integer
+        marketBalance:
+          type: number
+        totalDemand:
+          type: number
+        totalSupply:
+          type: number
       required:
         - totalAgents
         - totalBusinesses
@@ -685,6 +699,13 @@ components:
         - avgMood
         - avgWealth
         - gdp
+        - birthsLastTick
+        - deathsLastTick
+        - profitableBusinesses
+        - unprofitableBusinesses
+        - marketBalance
+        - totalDemand
+        - totalSupply
 
     TopAgentsResponse:
       type: object

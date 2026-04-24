@@ -18,4 +18,11 @@ export interface StatsSummary {
   happiestAgent?: string;
   mostPopularGood?: string;
   gdp: number;
+  birthsLastTick: number;
+  deathsLastTick: number;
+  profitableBusinesses: number;
+  unprofitableBusinesses: number;
+  marketBalance: number;
+  totalDemand: number;
+  totalSupply: number;
 }

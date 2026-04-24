@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ElementType } from "react";
 import {
   useGetSimulationState,
   getGetSimulationStateQueryKey,
@@ -9,11 +9,14 @@ import {
 } from "@workspace/api-client-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-import { Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Settings } from "lucide-react";
+import {
+  Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Settings,
+  Baby, Building2, Package, Briefcase,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import StatCard from "@/components/stat-card";
 import DebugPanel from "@/components/debug-panel";
 import PopulationChart from "@/components/population-chart";
-import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 
 export default function Dashboard() {
@@ -128,24 +131,80 @@ export default function Dashboard() {
       </div>
 
       {summary && (
-        <div className="bg-card border border-card-border rounded p-4">
-          <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-3">Сводка</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+        <div className="bg-card border border-card-border rounded p-4 space-y-4">
+          <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Сводка</h2>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <SummaryMetric
+              icon={Baby}
+              label="Рождаемость"
+              sublabel="баланс за последний день"
+              value={`+${summary.birthsLastTick} / −${summary.deathsLastTick}`}
+              delta={summary.birthsLastTick - summary.deathsLastTick}
+              deltaLabel={
+                summary.birthsLastTick - summary.deathsLastTick >= 0
+                  ? `+${summary.birthsLastTick - summary.deathsLastTick} чел.`
+                  : `${summary.birthsLastTick - summary.deathsLastTick} чел.`
+              }
+              positive={summary.birthsLastTick >= summary.deathsLastTick}
+            />
+            <SummaryMetric
+              icon={Building2}
+              label="Бизнесы"
+              sublabel="прибыльных / убыточных"
+              value={`${summary.profitableBusinesses} / ${summary.unprofitableBusinesses}`}
+              delta={summary.profitableBusinesses - summary.unprofitableBusinesses}
+              deltaLabel={
+                summary.profitableBusinesses > summary.unprofitableBusinesses
+                  ? `${Math.round((summary.profitableBusinesses / summary.totalBusinesses) * 100)}% в плюсе`
+                  : `${Math.round((summary.unprofitableBusinesses / summary.totalBusinesses) * 100)}% в убытке`
+              }
+              positive={summary.profitableBusinesses >= summary.unprofitableBusinesses}
+              bar
+              barFill={summary.totalBusinesses > 0 ? summary.profitableBusinesses / summary.totalBusinesses : 0}
+            />
+            <SummaryMetric
+              icon={Package}
+              label="Рынок"
+              sublabel="баланс всех бизнесов"
+              value={summary.marketBalance.toLocaleString()}
+              delta={summary.marketBalance}
+              deltaLabel={
+                summary.totalDemand > 0
+                  ? `спрос/пред. ${(summary.totalDemand / Math.max(summary.totalSupply, 1)).toFixed(2)}`
+                  : "нет данных"
+              }
+              positive={summary.marketBalance >= 0}
+            />
+            <SummaryMetric
+              icon={Briefcase}
+              label="Трудоустроено"
+              sublabel="жителей работает"
+              value={`${summary.employedAgents} / ${summary.totalAgents}`}
+              delta={summary.totalAgents > 0 ? summary.employedAgents / summary.totalAgents : 0}
+              deltaLabel={
+                summary.totalAgents > 0
+                  ? `${Math.round((summary.employedAgents / summary.totalAgents) * 100)}% занято`
+                  : "нет данных"
+              }
+              positive={(summary.employedAgents / Math.max(summary.totalAgents, 1)) >= 0.5}
+              bar
+              barFill={summary.totalAgents > 0 ? summary.employedAgents / summary.totalAgents : 0}
+            />
+          </div>
+
+          <div className="border-t border-border pt-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
             <div>
-              <p className="text-muted-foreground">Богатейший</p>
+              <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Богатейший житель</p>
               <p className="font-medium text-foreground truncate">{summary.richestAgent ?? "—"}</p>
             </div>
             <div>
-              <p className="text-muted-foreground">Счастливейший</p>
+              <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Счастливейший житель</p>
               <p className="font-medium text-foreground truncate">{summary.happiestAgent ?? "—"}</p>
             </div>
             <div>
-              <p className="text-muted-foreground">Популярный товар</p>
-              <p className="font-medium text-foreground truncate">{summary.mostPopularGood ?? "—"}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Трудоустроено</p>
-              <p className="font-medium text-foreground">{summary.employedAgents} / {summary.totalAgents}</p>
+              <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Популярный товар</p>
+              <p className="font-medium text-[hsl(43,100%,50%)] truncate">{summary.mostPopularGood ?? "—"}</p>
             </div>
           </div>
         </div>
@@ -171,6 +230,41 @@ export default function Dashboard() {
       )}
 
       <DebugPanel running={running} />
+    </div>
+  );
+}
+
+function SummaryMetric({
+  icon: Icon, label, sublabel, value, deltaLabel, positive, bar, barFill,
+}: {
+  icon: ElementType;
+  label: string;
+  sublabel: string;
+  value: string;
+  delta: number;
+  deltaLabel: string;
+  positive: boolean;
+  bar?: boolean;
+  barFill?: number;
+}) {
+  const accent = positive ? "hsl(173,80%,40%)" : "hsl(348,83%,52%)";
+  return (
+    <div className="bg-muted/20 border border-border/50 rounded p-3 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Icon className="w-3 h-3 text-muted-foreground shrink-0" />
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground leading-tight">{label}</span>
+      </div>
+      <p className="text-sm font-semibold tabular-nums leading-none" style={{ color: accent }}>{value}</p>
+      {bar && barFill !== undefined && (
+        <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-700"
+            style={{ width: `${Math.round(barFill * 100)}%`, background: accent }}
+          />
+        </div>
+      )}
+      <p className="text-[10px] text-muted-foreground leading-tight">{sublabel}</p>
+      <p className="text-[10px] font-medium" style={{ color: accent }}>{deltaLabel}</p>
     </div>
   );
 }
