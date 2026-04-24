@@ -135,9 +135,9 @@ class SimulationEngine {
     if (this.agents.size === 0) {
       logger.info("No agents found, generating initial population...");
       await this.generatePopulation();
-    }
-
-    if (this.state.running) {
+      logger.info("Auto-starting simulation after initial population generation");
+      await this.start();
+    } else if (this.state.running) {
       logger.info("Resuming simulation from saved state");
       this.startTimer();
     }
@@ -416,8 +416,16 @@ class SimulationEngine {
     logger.info("Simulation stopped");
   }
 
+  private async waitForTickComplete(): Promise<void> {
+    const deadline = Date.now() + 30_000;
+    while (this.isTicking && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
   async reset(): Promise<void> {
     await this.stop();
+    await this.waitForTickComplete();
     logger.info("Resetting simulation...");
 
     await db.delete(statsHistoryTable);
@@ -445,6 +453,7 @@ class SimulationEngine {
     };
     await this.persistState();
     await this.generatePopulation();
+    await this.start();
     logger.info("Simulation reset complete");
   }
 

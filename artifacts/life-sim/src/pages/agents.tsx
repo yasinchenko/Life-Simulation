@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import {
   useListAgents,
+  useGetConfig,
   getListAgentsQueryKey,
   type ListAgentsQueryResult,
 } from "@workspace/api-client-react";
@@ -37,9 +38,12 @@ export default function AgentsPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [filterAction, setFilterAction] = useState<string>("");
 
+  const { data: config } = useGetConfig();
+  const tickIntervalMs = config?.tickIntervalMs ?? 60000;
+
   const { data, isLoading } = useListAgents(
     { page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined },
-    { query: { queryKey: getListAgentsQueryKey({ page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined }), refetchInterval: 60000 } }
+    { query: { queryKey: getListAgentsQueryKey({ page, limit: 50, sortBy, sortDir, filterAction: filterAction || undefined }), refetchInterval: tickIntervalMs } }
   );
 
   const handleSort = (col: SortBy) => {
