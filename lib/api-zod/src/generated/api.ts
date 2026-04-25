@@ -215,6 +215,7 @@ export const GetGovernmentResponse = zod.object({
   "totalTaxCollected": zod.number(),
   "totalSubsidiesPaid": zod.number(),
   "totalPensionPaid": zod.number(),
+  "totalPublicServicesPaid": zod.number(),
   "taxRate": zod.number(),
   "subsidyAmount": zod.number(),
   "pensionRate": zod.number()

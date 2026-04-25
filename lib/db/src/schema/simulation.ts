@@ -12,6 +12,7 @@ export const simStateTable = pgTable("sim_state", {
   totalTaxCollected: real("total_tax_collected").notNull().default(0),
   totalSubsidiesPaid: real("total_subsidies_paid").notNull().default(0),
   totalPensionPaid: real("total_pension_paid").notNull().default(0),
+  totalPublicServicesPaid: real("total_public_services_paid").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -123,6 +123,7 @@ export interface GovernmentState {
   totalTaxCollected: number;
   totalSubsidiesPaid: number;
   totalPensionPaid: number;
+  totalPublicServicesPaid: number;
   taxRate: number;
   subsidyAmount: number;
   pensionRate: number;

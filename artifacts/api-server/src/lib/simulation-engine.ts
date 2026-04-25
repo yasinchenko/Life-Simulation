@@ -81,6 +81,7 @@ interface SimState {
   totalTaxCollected: number;
   totalSubsidiesPaid: number;
   totalPensionPaid: number;
+  totalPublicServicesPaid: number;
 }
 
 const MALE_NAMES = [
@@ -273,6 +274,7 @@ class SimulationEngine {
     totalTaxCollected: 0,
     totalSubsidiesPaid: 0,
     totalPensionPaid: 0,
+    totalPublicServicesPaid: 0,
   };
   private config: SimulationConfig = { ...DEFAULT_CONFIG };
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -358,6 +360,7 @@ class SimulationEngine {
         totalTaxCollected: row.totalTaxCollected,
         totalSubsidiesPaid: row.totalSubsidiesPaid,
         totalPensionPaid: row.totalPensionPaid,
+        totalPublicServicesPaid: row.totalPublicServicesPaid ?? 0,
       };
     } else {
       await db.insert(simStateTable).values({
@@ -369,6 +372,7 @@ class SimulationEngine {
         totalTaxCollected: 0,
         totalSubsidiesPaid: 0,
         totalPensionPaid: 0,
+        totalPublicServicesPaid: 0,
       });
     }
   }
@@ -932,6 +936,7 @@ class SimulationEngine {
       totalTaxCollected: 0,
       totalSubsidiesPaid: 0,
       totalPensionPaid: 0,
+      totalPublicServicesPaid: 0,
     };
     await this.persistState();
     await this.generatePopulation();
@@ -1447,6 +1452,7 @@ class SimulationEngine {
     this.state.totalTaxCollected += taxRevenue;
     this.state.totalSubsidiesPaid += subsidiesPaid;
     this.state.totalPensionPaid += pensionPaid;
+    this.state.totalPublicServicesPaid += publicServiceSpend;
 
     // Process daily lifecycle: remove dead agents, spawn newborns
     if (isNewDay) {
@@ -2036,6 +2042,7 @@ class SimulationEngine {
         totalTaxCollected: this.state.totalTaxCollected,
         totalSubsidiesPaid: this.state.totalSubsidiesPaid,
         totalPensionPaid: this.state.totalPensionPaid,
+        totalPublicServicesPaid: this.state.totalPublicServicesPaid,
         updatedAt: new Date(),
       }).where(eq(simStateTable.id, existing.id));
     }
@@ -2281,6 +2288,7 @@ class SimulationEngine {
       totalTaxCollected: Math.round(this.state.totalTaxCollected * 100) / 100,
       totalSubsidiesPaid: Math.round(this.state.totalSubsidiesPaid * 100) / 100,
       totalPensionPaid: Math.round(this.state.totalPensionPaid * 100) / 100,
+      totalPublicServicesPaid: Math.round(this.state.totalPublicServicesPaid * 100) / 100,
       taxRate: this.config.taxRate,
       subsidyAmount: this.config.subsidyAmount,
       pensionRate: this.config.pensionRate,
