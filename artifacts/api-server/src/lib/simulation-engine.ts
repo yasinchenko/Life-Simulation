@@ -94,9 +94,11 @@ const FEMALE_NAMES = [
 const PERSONALITIES = ["активный", "спокойный", "общительный", "замкнутый", "трудолюбивый", "ленивый", "амбициозный"];
 const FOOD_BUSINESS_NAMES = ["Пекарня", "Кафе", "Столовая", "Ресторан", "Фермерское хозяйство", "Супермаркет", "Закусочная"];
 const SERVICE_BUSINESS_NAMES = ["Парикмахерская", "Мастерская", "Магазин", "Сервисный центр", "Прачечная", "Ателье", "Аптека"];
+const HOSPITAL_BUSINESS_NAMES = ["Городская больница", "Поликлиника", "Медицинский центр", "Амбулатория", "Клиника здоровья", "Медпункт"];
 const FOOD_GOOD_NAMES = ["Хлеб", "Молоко", "Мясо", "Овощи", "Фрукты", "Рыба", "Крупа"];
 const SERVICE_GOOD_NAMES = ["Одежда", "Инструменты", "Бытовая химия", "Электроника", "Мебель"];
-const ACTIONS = ["eat", "rest", "socialize", "work", "idle"];
+const HOSPITAL_GOOD_NAMES = ["Лечение", "Медосмотр", "Операция", "Консультация врача", "Физиотерапия"];
+const ACTIONS = ["eat", "rest", "sleep", "socialize", "work", "idle", "heal"];
 
 function rand(min: number, max: number): number {
   return Math.random() * (max - min) + min;
@@ -221,9 +223,12 @@ class SimulationEngine {
       await this.generatePopulation();
       logger.info("Auto-starting simulation after initial population generation");
       await this.start();
-    } else if (this.state.running) {
-      logger.info("Resuming simulation from saved state");
-      this.startTimer();
+    } else {
+      await this.ensureHospitals();
+      if (this.state.running) {
+        logger.info("Resuming simulation from saved state");
+        this.startTimer();
+      }
     }
 
     logger.info({ agentCount: this.agents.size, businessCount: this.businesses.size }, "Simulation engine initialized");
@@ -383,12 +388,58 @@ class SimulationEngine {
     }
   }
 
+  private async ensureHospitals(): Promise<void> {
+    const existingHospitals = Array.from(this.businesses.values()).filter(b => b.type === "hospital");
+    if (existingHospitals.length > 0) {
+      logger.info({ count: existingHospitals.length }, "Hospitals already present, skipping creation");
+      return;
+    }
+
+    const { baseFoodPrice } = this.config;
+    const hospitalCount = Math.max(5, Math.floor(this.businesses.size * 0.12));
+    logger.info({ hospitalCount }, "No hospitals found — spawning hospitals for existing world");
+
+    const businessInserts = [];
+    for (let i = 0; i < hospitalCount; i++) {
+      businessInserts.push({
+        name: `${pick(HOSPITAL_BUSINESS_NAMES)} №${i + 1}`,
+        type: "hospital",
+        balance: rand(2000, 8000),
+        productionRate: rand(2, 10),
+        ownerId: null,
+      });
+    }
+
+    const savedBiz = await db.insert(businessesTable).values(businessInserts).returning();
+    for (const b of savedBiz) {
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+    }
+
+    const goodInserts = savedBiz.map(b => ({
+      name: pick(HOSPITAL_GOOD_NAMES),
+      businessId: b.id,
+      basePrice: baseFoodPrice * 3,
+      currentPrice: baseFoodPrice * 3 * (1 + this.config.priceMarkup),
+      quality: rand(50, 95),
+      demand: rand(20, 50),
+      supply: rand(30, 60),
+    }));
+
+    const savedGoods = await db.insert(goodsTable).values(goodInserts).returning();
+    for (const g of savedGoods) {
+      this.goods.set(g.id, { ...g });
+    }
+
+    logger.info({ hospitalCount, goodsCount: savedGoods.length }, "Hospitals spawned successfully");
+  }
+
   private async generatePopulation(): Promise<void> {
     const { initialAgents, initialBusinesses, baseFoodPrice, baseSalary } = this.config;
     logger.info({ initialAgents, initialBusinesses }, "Generating population");
 
-    const foodBusinessCount = Math.floor(initialBusinesses * 0.6);
-    const serviceBusinessCount = initialBusinesses - foodBusinessCount;
+    const hospitalBusinessCount = Math.max(5, Math.floor(initialBusinesses * 0.12));
+    const foodBusinessCount = Math.floor((initialBusinesses - hospitalBusinessCount) * 0.62);
+    const serviceBusinessCount = initialBusinesses - hospitalBusinessCount - foodBusinessCount;
 
     const businessInserts = [];
     for (let i = 0; i < foodBusinessCount; i++) {
@@ -409,6 +460,15 @@ class SimulationEngine {
         ownerId: null,
       });
     }
+    for (let i = 0; i < hospitalBusinessCount; i++) {
+      businessInserts.push({
+        name: `${pick(HOSPITAL_BUSINESS_NAMES)} №${i + 1}`,
+        type: "hospital",
+        balance: rand(2000, 8000),
+        productionRate: rand(2, 10),
+        ownerId: null,
+      });
+    }
 
     const savedBusinesses = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBusinesses) {
@@ -417,6 +477,7 @@ class SimulationEngine {
 
     const foodBusinessIds = savedBusinesses.filter(b => b.type === "food").map(b => b.id);
     const serviceBusinessIds = savedBusinesses.filter(b => b.type === "service").map(b => b.id);
+    const hospitalBusinessIds = savedBusinesses.filter(b => b.type === "hospital").map(b => b.id);
 
     const goodInserts = [];
     for (const bId of foodBusinessIds) {
@@ -441,6 +502,18 @@ class SimulationEngine {
         quality: rand(30, 90),
         demand: rand(30, 70),
         supply: rand(30, 70),
+      });
+    }
+    for (const bId of hospitalBusinessIds) {
+      const goodName = pick(HOSPITAL_GOOD_NAMES);
+      goodInserts.push({
+        name: goodName,
+        businessId: bId,
+        basePrice: baseFoodPrice * 3,
+        currentPrice: baseFoodPrice * 3 * (1 + this.config.priceMarkup),
+        quality: rand(50, 95),
+        demand: rand(20, 50),
+        supply: rand(30, 60),
       });
     }
 
@@ -644,7 +717,7 @@ class SimulationEngine {
 
     const dbgBudgetBefore = runningBudget;
     const dbgBizBalanceBefore = Array.from(this.businesses.values()).reduce((s, b) => s + b.balance, 0);
-    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0, dbgActSleep = 0;
+    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0, dbgActSleep = 0, dbgActHeal = 0;
     let dbgMoneyIn = 0, dbgMoneyOut = 0, dbgWagesPaid = 0;
     let dbgSuccessful = 0, dbgFailedNoGoods = 0, dbgFailedNoMoney = 0;
     let dbgPensionRecipients = 0, dbgSubsidyRecipients = 0;
@@ -752,11 +825,29 @@ class SimulationEngine {
         agent.needs.health = clamp(agent.needs.health + 0.3);
         agent.currentAction = "sleep";
       } else if (criticalNeed === "health") {
-        // Agent rests to recover health, also restores some sleep and comfort
-        agent.needs.sleep = clamp(agent.needs.sleep + rand(10, 20));
-        agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 15));
-        agent.needs.health = clamp(agent.needs.health + 0.5);
-        agent.currentAction = "rest";
+        // Try to visit a hospital; fall back to home rest if unavailable or unaffordable
+        const hospitalGood = this.pickAvailableGood("hospital");
+        if (hospitalGood && agent.money >= hospitalGood.currentPrice) {
+          agent.money -= hospitalGood.currentPrice;
+          agent.needs.health = clamp(agent.needs.health + rand(15, 28));
+          agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
+          agent.currentAction = "heal";
+          hospitalGood.demand = clamp(hospitalGood.demand + 1, 0, 200);
+          const bizId = hospitalGood.businessId;
+          if (bizId) {
+            const biz = this.businesses.get(bizId);
+            if (biz) biz.balance += hospitalGood.currentPrice;
+          }
+          gdp += hospitalGood.currentPrice;
+          dbgMoneyOut += hospitalGood.currentPrice;
+          dbgSuccessful++;
+        } else {
+          // No hospital available or can't afford → rest at home
+          agent.needs.sleep = clamp(agent.needs.sleep + rand(10, 18));
+          agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
+          agent.needs.health = clamp(agent.needs.health + 0.3);
+          agent.currentAction = "rest";
+        }
       } else if (criticalNeed === "hunger") {
         const foodGood = this.pickAvailableGood("food");
         if (foodGood && agent.money >= foodGood.currentPrice) {
@@ -860,6 +951,7 @@ class SimulationEngine {
       else if (act === "rest") dbgActRest++;
       else if (act === "socialize") dbgActSocialize++;
       else if (act === "sleep") dbgActSleep++;
+      else if (act === "heal") dbgActHeal++;
       else dbgActIdle++;
 
       // Track recent actions (keep last 10)
@@ -946,7 +1038,7 @@ class SimulationEngine {
         agents: {
           processed: agentIds.length - dbgSkipped,
           skipped: dbgSkipped,
-          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, sleep: dbgActSleep, socialize: dbgActSocialize, idle: dbgActIdle },
+          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, sleep: dbgActSleep, heal: dbgActHeal, socialize: dbgActSocialize, idle: dbgActIdle },
           moneyIn: Math.round(dbgMoneyIn),
           moneyOut: Math.round(dbgMoneyOut),
         },
@@ -1088,7 +1180,7 @@ class SimulationEngine {
     return "work";
   }
 
-  private pickAvailableGood(type: "food" | "service"): GoodState | null {
+  private pickAvailableGood(type: "food" | "service" | "hospital"): GoodState | null {
     const relevant = Array.from(this.goods.values()).filter(g => {
       const biz = g.businessId ? this.businesses.get(g.businessId) : null;
       return biz && biz.type === type;
@@ -1119,9 +1211,9 @@ class SimulationEngine {
     for (const good of this.goods.values()) {
       const demandFactor = (good.demand - 50) / 100;
       const { baseFoodPrice, priceMarkup } = this.config;
-      const base = good.businessId
-        ? (this.businesses.get(good.businessId)?.type === "food" ? baseFoodPrice : baseFoodPrice * 2)
-        : baseFoodPrice;
+      const bizType = good.businessId ? this.businesses.get(good.businessId)?.type : undefined;
+      const priceMultiplier = bizType === "food" ? 1 : bizType === "hospital" ? 3 : 2;
+      const base = baseFoodPrice * priceMultiplier;
       good.currentPrice = Math.max(1, base * (1 + priceMarkup) + base * demandFactor);
       good.demand = clamp(good.demand - rand(0, 2), 0, 200);
       good.supply = clamp(good.supply + rand(0, 3), 0, 200);

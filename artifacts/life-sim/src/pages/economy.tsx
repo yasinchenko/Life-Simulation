@@ -22,10 +22,11 @@ type BizGroupBy = "type" | "status" | "size";
 type BizSortCol = "label" | "count" | "profitablePct" | "avgBalance" | "totalEmployees" | "avgProduction";
 type GoodSortCol = "name" | "ratio" | "priceDiff" | "demand" | "supply" | "currentPrice";
 
-const TYPE_LABELS: Record<string, string> = { food: "Еда", service: "Сервис" };
+const TYPE_LABELS: Record<string, string> = { food: "Еда", service: "Сервис", hospital: "Больница" };
 const TYPE_COLORS: Record<string, string> = {
   food: "text-[hsl(43,100%,50%)]",
   service: "text-[hsl(173,80%,40%)]",
+  hospital: "text-[hsl(0,80%,60%)]",
 };
 
 const BIZ_GROUP_OPTIONS: { key: BizGroupBy; label: string }[] = [

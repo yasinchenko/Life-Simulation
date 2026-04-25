@@ -13,6 +13,7 @@ const ACTION_LABELS: Record<string, string> = {
   eat: "Ест",
   rest: "Отдыхает",
   sleep: "Спит",
+  heal: "Лечится",
   socialize: "Общается",
   work: "Работает",
   idle: "Простаивает",
@@ -24,6 +25,7 @@ const ACTION_COLORS: Record<string, string> = {
   socialize: "bg-[hsl(280,80%,60%)]/10 text-[hsl(280,80%,60%)] border-[hsl(280,80%,60%)]/30",
   work: "bg-[hsl(210,100%,50%)]/10 text-[hsl(210,100%,50%)] border-[hsl(210,100%,50%)]/30",
   sleep: "bg-[hsl(220,70%,55%)]/10 text-[hsl(220,70%,55%)] border-[hsl(220,70%,55%)]/30",
+  heal: "bg-[hsl(0,80%,55%)]/10 text-[hsl(0,80%,55%)] border-[hsl(0,80%,55%)]/30",
   idle: "bg-muted/50 text-muted-foreground border-border",
 };
 
