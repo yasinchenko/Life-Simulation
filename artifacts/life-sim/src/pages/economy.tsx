@@ -635,18 +635,33 @@ function GoodsTable({ goods, loading }: { goods: GoodItem[]; loading: boolean })
             ))
           ) : goods.map(good => {
             const priceDiff = good.currentPrice - good.basePrice;
+            const pricePct = good.basePrice > 0 ? (priceDiff / good.basePrice) * 100 : 0;
+            const isUp = priceDiff > 0.01;
+            const isDown = priceDiff < -0.01;
+            const demandSupplyRatio = good.supply > 0 ? good.demand / good.supply : 999;
             return (
               <tr key={good.id} className="border-b border-border/50 hover:bg-accent/20">
                 <td className="px-3 py-2 font-medium text-foreground">{good.name}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{good.basePrice.toFixed(2)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">
-                  <span className={priceDiff > 0 ? "text-[hsl(348,83%,47%)]" : "text-[hsl(173,80%,40%)]"}>
-                    {good.currentPrice.toFixed(2)}
-                  </span>
+                  <div className="flex items-center justify-end gap-1">
+                    <span className={isUp ? "text-[hsl(348,83%,47%)]" : isDown ? "text-[hsl(173,80%,40%)]" : "text-foreground"}>
+                      {good.currentPrice.toFixed(2)}
+                    </span>
+                    <span className={`text-[10px] font-medium tabular-nums ${isUp ? "text-[hsl(348,83%,47%)]" : isDown ? "text-[hsl(173,80%,40%)]" : "text-muted-foreground"}`}>
+                      {isUp ? "▲" : isDown ? "▼" : "–"}{Math.abs(pricePct).toFixed(1)}%
+                    </span>
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{good.quality.toFixed(0)}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[hsl(43,100%,50%)]">{good.demand.toFixed(1)}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[hsl(210,100%,50%)]">{good.supply.toFixed(1)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-[hsl(43,100%,50%)]">
+                  {good.demand.toFixed(1)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <span className={demandSupplyRatio > 1.5 ? "text-[hsl(348,83%,47%)]" : demandSupplyRatio < 0.7 ? "text-[hsl(173,80%,40%)]" : "text-[hsl(210,100%,50%)]"}>
+                    {good.supply.toFixed(1)}
+                  </span>
+                </td>
               </tr>
             );
           })}

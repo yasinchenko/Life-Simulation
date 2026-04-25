@@ -1853,40 +1853,59 @@ class SimulationEngine {
   }
 
   private updateGoodPrices(): void {
+    const { priceMarkup } = this.config;
+
     for (const good of this.goods.values()) {
-      const demandFactor = (good.demand - 50) / 100;
-      const { baseFoodPrice, priceMarkup } = this.config;
       const bizType = good.businessId != null ? this.businesses.get(good.businessId)?.type : undefined;
+      const base = good.basePrice;
 
-      const priceMultiplier =
-        bizType === "food" ? 1 :
-        bizType === "hospital" ? 3 :
-        bizType === "farm" ? 0.5 :
-        bizType === "workshop" ? 0.8 :
-        bizType === "school" ? 1.5 :
-        bizType === "park" ? 1.2 :
-        bizType === "temple" ? 0.4 :
-        2; // service
-      const base = baseFoodPrice * priceMultiplier;
-      // Quality premium: ±10% based on quality deviation from 50
+      // ── Equilibrium price (quality-adjusted base) ─────────────────────────
+      // Quality premium: ±10% at quality 0/100; neutral at quality 50
       const qualityPremium = (good.quality - 50) / 500;
-      good.currentPrice = Math.max(1, base * (1 + priceMarkup) * (1 + qualityPremium) + base * demandFactor);
+      const equilibrium = base * (1 + priceMarkup) * (1 + qualityPremium);
 
-      // Supply dynamics differ by business tier
+      // ── Demand-supply pressure ────────────────────────────────────────────
+      // ratio > 1 → demand exceeds supply → price rises
+      // ratio < 1 → excess supply → price falls
+      // elasticity: 2% of currentPrice per unit of excess ratio per tick
+      const supply = Math.max(good.supply, 1);
+      const ratio = good.demand / supply;
+      const elasticity = 0.02;
+      const pressureChange = (ratio - 1) * elasticity * good.currentPrice;
+
+      // ── Mean reversion toward equilibrium ─────────────────────────────────
+      // Prevents runaway inflation/deflation; 3% pull per tick
+      const reversionRate = 0.03;
+      const reversion = (equilibrium - good.currentPrice) * reversionRate;
+
+      // ── Apply combined adjustment with hard floor/ceiling ─────────────────
+      // Ceiling: 2.5x base for food/service (agent affordability), 3x for others
+      const priceCeiling = (bizType === "food" || bizType === "service" || bizType === "hospital") ? base * 2.5 : base * 3.0;
+      const newPrice = good.currentPrice + pressureChange + reversion;
+      good.currentPrice = Math.max(base * 0.3, Math.min(priceCeiling, newPrice));
+
+      // ── Supply/demand natural dynamics per business tier ──────────────────
       if (bizType === "farm") {
-        good.supply = clamp(good.supply + rand(3, 8), 0, 200);
-        good.demand = clamp(good.demand - rand(0, 1), 0, 200);
+        // Raw material producers: high output
+        good.supply = clamp(good.supply + rand(4, 10), 0, 200);
+        good.demand = clamp(good.demand - rand(1, 3), 0, 200);
       } else if (bizType === "workshop") {
-        good.supply = clamp(good.supply + rand(2, 6), 0, 200);
-        good.demand = clamp(good.demand - rand(0, 1), 0, 200);
+        // Manufacturing: steady output
+        good.supply = clamp(good.supply + rand(3, 8), 0, 200);
+        good.demand = clamp(good.demand - rand(1, 2), 0, 200);
       } else if (bizType === "school" || bizType === "park" || bizType === "temple") {
-        // Public services replenish supply daily — high turnover
-        good.supply = clamp(good.supply + rand(2, 5), 0, 200);
-        good.demand = clamp(good.demand - rand(0, 1), 0, 200);
+        // Public services: strong supply regeneration (capacity-based, not stock)
+        // High replenishment prevents extreme price spikes for essential services
+        good.supply = clamp(good.supply + rand(8, 16), 0, 200);
+        good.demand = clamp(good.demand - rand(2, 5), 0, 200);
+      } else if (bizType === "hospital") {
+        // Healthcare: moderate supply recovery
+        good.supply = clamp(good.supply + rand(4, 8), 0, 200);
+        good.demand = clamp(good.demand - rand(1, 3), 0, 200);
       } else {
-        // Consumer goods: natural slow growth
-        good.supply = clamp(good.supply + rand(0, 2), 0, 200);
-        good.demand = clamp(good.demand - rand(0, 2), 0, 200);
+        // Consumer goods (food/service): moderate replenishment
+        good.supply = clamp(good.supply + rand(1, 4), 0, 200);
+        good.demand = clamp(good.demand - rand(1, 3), 0, 200);
       }
     }
   }
