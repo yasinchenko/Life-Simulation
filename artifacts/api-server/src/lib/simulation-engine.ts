@@ -2026,7 +2026,14 @@ class SimulationEngine {
     this.syncCounter++;
     if (this.syncCounter >= 1) {
       this.syncCounter = 0;
+      const dbStart = Date.now();
       await this.syncToDB(gdp);
+      const dbMs = Date.now() - dbStart;
+      if (dbMs > 500) {
+        logger.warn({ tick: this.state.tick, dbMs, agentCount: this.agents.size }, "syncToDB slow");
+      } else {
+        logger.debug({ tick: this.state.tick, dbMs }, "syncToDB done");
+      }
     }
   }
 
@@ -2625,48 +2632,92 @@ class SimulationEngine {
   private async syncToDB(gdp: number): Promise<void> {
     await this.persistState();
 
-    const BATCH_SIZE = 100;
     const agentArray = Array.from(this.agents.values());
-    for (let i = 0; i < agentArray.length; i += BATCH_SIZE) {
-      const batch = agentArray.slice(i, i + BATCH_SIZE);
-      for (const agent of batch) {
-        await db.update(agentsTable)
-          .set({
-            age: agent.age,
-            mood: agent.mood,
-            money: agent.money,
-            currentAction: agent.currentAction,
-            employerId: agent.employerId,
-            isRetired: agent.isRetired,
-            jobHistory: JSON.stringify(agent.jobHistory.slice(-50)),
-            careerLevel: agent.careerLevel,
-            ambition: agent.ambition,
-            strength: agent.strength,
-            intelligence: agent.intelligence,
-          })
-          .where(eq(agentsTable.id, agent.id));
-        await db.update(needsTable)
-          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social, health: agent.needs.health, sleep: agent.needs.sleep, education: agent.needs.education, entertainment: agent.needs.entertainment, faith: agent.needs.faith, housingSafety: agent.needs.housingSafety, financialSafety: agent.needs.financialSafety, physicalSafety: agent.needs.physicalSafety, socialRating: agent.needs.socialRating, wellbeing: agent.needs.wellbeing })
-          .where(eq(needsTable.agentId, agent.id));
-      }
-    }
-
     const goodsArray = Array.from(this.goods.values());
-    for (const good of goodsArray) {
-      await db.update(goodsTable)
-        .set({ currentPrice: good.currentPrice, demand: good.demand, supply: good.supply, quality: good.quality })
-        .where(eq(goodsTable.id, good.id));
-    }
-
     const bizArray = Array.from(this.businesses.values());
-    for (const biz of bizArray) {
-      await db.update(businessesTable)
-        .set({ balance: biz.balance, productivityLevel: biz.productivityLevel ?? 0 })
-        .where(eq(businessesTable.id, biz.id));
-    }
 
-    // Sync dirty relations to DB (up to 500 per tick to avoid flooding)
+    // --- Bulk update agents in one SQL query ---
+    const agentUpdateP = agentArray.length > 0
+      ? db.execute(sql`
+          UPDATE agents AS t SET
+            age             = v.age::int,
+            mood            = v.mood::float8,
+            money           = v.money::float8,
+            current_action  = v.current_action::text,
+            employer_id     = v.employer_id::int,
+            is_retired      = v.is_retired::boolean,
+            job_history     = v.job_history::text,
+            career_level    = v.career_level::int,
+            ambition        = v.ambition::float8,
+            strength        = v.strength::float8,
+            intelligence    = v.intelligence::float8
+          FROM (VALUES ${sql.join(
+            agentArray.map(a => sql`(${a.id},${a.age},${a.mood},${a.money},${a.currentAction},${a.employerId ?? null},${a.isRetired},${JSON.stringify(a.jobHistory.slice(-50))},${a.careerLevel},${a.ambition},${a.strength ?? 50},${a.intelligence ?? 50})`),
+            sql.raw(',')
+          )}) AS v(id, age, mood, money, current_action, employer_id, is_retired, job_history, career_level, ambition, strength, intelligence)
+          WHERE t.id = v.id::int
+        `)
+      : Promise.resolve();
+
+    // --- Bulk update needs in one SQL query ---
+    const needsUpdateP = agentArray.length > 0
+      ? db.execute(sql`
+          UPDATE needs AS t SET
+            hunger           = v.hunger::float8,
+            comfort          = v.comfort::float8,
+            social           = v.social::float8,
+            health           = v.health::float8,
+            sleep            = v.sleep::float8,
+            education        = v.education::float8,
+            entertainment    = v.entertainment::float8,
+            faith            = v.faith::float8,
+            housing_safety   = v.housing_safety::float8,
+            financial_safety = v.financial_safety::float8,
+            physical_safety  = v.physical_safety::float8,
+            social_rating    = v.social_rating::float8,
+            wellbeing        = v.wellbeing::float8
+          FROM (VALUES ${sql.join(
+            agentArray.map(a => sql`(${a.id},${a.needs.hunger},${a.needs.comfort},${a.needs.social},${a.needs.health},${a.needs.sleep},${a.needs.education},${a.needs.entertainment},${a.needs.faith},${a.needs.housingSafety},${a.needs.financialSafety},${a.needs.physicalSafety},${a.needs.socialRating},${a.needs.wellbeing})`),
+            sql.raw(',')
+          )}) AS v(agent_id, hunger, comfort, social, health, sleep, education, entertainment, faith, housing_safety, financial_safety, physical_safety, social_rating, wellbeing)
+          WHERE t.agent_id = v.agent_id::int
+        `)
+      : Promise.resolve();
+
+    // --- Bulk update goods in one SQL query ---
+    const goodsUpdateP = goodsArray.length > 0
+      ? db.execute(sql`
+          UPDATE goods AS t SET
+            current_price = v.current_price::float8,
+            demand        = v.demand::float8,
+            supply        = v.supply::float8,
+            quality       = v.quality::float8
+          FROM (VALUES ${sql.join(
+            goodsArray.map(g => sql`(${g.id},${g.currentPrice},${g.demand},${g.supply},${g.quality})`),
+            sql.raw(',')
+          )}) AS v(id, current_price, demand, supply, quality)
+          WHERE t.id = v.id::int
+        `)
+      : Promise.resolve();
+
+    // --- Bulk update businesses in one SQL query ---
+    const bizUpdateP = bizArray.length > 0
+      ? db.execute(sql`
+          UPDATE businesses AS t SET
+            balance           = v.balance::float8,
+            productivity_level = v.productivity_level::int
+          FROM (VALUES ${sql.join(
+            bizArray.map(b => sql`(${b.id},${b.balance},${b.productivityLevel ?? 0})`),
+            sql.raw(',')
+          )}) AS v(id, balance, productivity_level)
+          WHERE t.id = v.id::int
+        `)
+      : Promise.resolve();
+
+    // --- Bulk sync dirty relations (split new vs existing) ---
     const dirtyKeys = Array.from(this.dirtyRelations).slice(0, 500);
+    const newRelRows: { agentIdA: number; agentIdB: number; friendshipLevel: number }[] = [];
+    const existingRelRows: { agentIdA: number; agentIdB: number; friendshipLevel: number }[] = [];
     for (const key of dirtyKeys) {
       const [aStr, bStr] = key.split(":");
       const agentIdA = parseInt(aStr, 10);
@@ -2674,20 +2725,33 @@ class SimulationEngine {
       const level = this.relations.get(agentIdA)?.get(agentIdB);
       if (level !== undefined) {
         if (this.persistedRelations.has(key)) {
-          await db.update(relationsTable)
-            .set({ friendshipLevel: level })
-            .where(and(
-              eq(relationsTable.agentIdA, agentIdA),
-              eq(relationsTable.agentIdB, agentIdB),
-            ));
+          existingRelRows.push({ agentIdA, agentIdB, friendshipLevel: level });
         } else {
-          await db.insert(relationsTable).values({ agentIdA, agentIdB, friendshipLevel: level });
+          newRelRows.push({ agentIdA, agentIdB, friendshipLevel: level });
           this.persistedRelations.add(key);
         }
       }
       this.dirtyRelations.delete(key);
     }
+    const relNewP = newRelRows.length > 0
+      ? db.insert(relationsTable).values(newRelRows)
+      : Promise.resolve();
+    const relUpdateP = existingRelRows.length > 0
+      ? db.execute(sql`
+          UPDATE relations AS t SET friendship_level = v.lvl::float8
+          FROM (VALUES ${sql.join(
+            existingRelRows.map(r => sql`(${r.agentIdA},${r.agentIdB},${r.friendshipLevel})`),
+            sql.raw(',')
+          )}) AS v(a, b, lvl)
+          WHERE t.agent_id_a = v.a::int AND t.agent_id_b = v.b::int
+        `)
+      : Promise.resolve();
+    const relUpsertP = Promise.all([relNewP, relUpdateP]);
 
+    // Run all bulk updates in parallel
+    await Promise.all([agentUpdateP, needsUpdateP, goodsUpdateP, bizUpdateP, relUpsertP]);
+
+    // Stats history (single row insert)
     const { avgMood, avgWealth, unemploymentRate } = this.getAggregateStats();
     await db.insert(statsHistoryTable).values({
       tick: this.state.tick,
@@ -2701,6 +2765,7 @@ class SimulationEngine {
       governmentBudget: this.state.governmentBudget,
     });
 
+    // Agent stat history (bulk insert + async cleanup)
     const currentTick = this.state.tick;
     const dbRows: { agentId: number; tick: number; money: number; mood: number; age: number; socialization: number }[] = [];
     for (const agent of this.agents.values()) {
@@ -2719,7 +2784,6 @@ class SimulationEngine {
     }
     if (dbRows.length > 0) {
       await db.insert(agentStatHistoryTable).values(dbRows);
-      // Удаляем лишние строки сразу после вставки (только для затронутых агентов)
       const agentIds = dbRows.map(r => r.agentId);
       void db.execute(sql`
         DELETE FROM agent_stat_history
