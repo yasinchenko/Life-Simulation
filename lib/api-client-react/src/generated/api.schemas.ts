@@ -49,6 +49,7 @@ export interface AgentNeeds {
   housingSafety?: number;
   financialSafety?: number;
   physicalSafety?: number;
+  socialRating?: number;
 }
 
 export interface AgentRelation {

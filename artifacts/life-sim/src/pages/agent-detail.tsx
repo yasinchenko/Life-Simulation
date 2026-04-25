@@ -208,6 +208,9 @@ export default function AgentDetailPage() {
         {agent.needs.physicalSafety != null && (
           <NeedsBar label="Физ. безопасность" value={agent.needs.physicalSafety} icon={Shield} color="hsl(0,80%,55%)" />
         )}
+        {agent.needs.socialRating != null && (
+          <NeedsBar label="Рейтинг среди жителей" value={agent.needs.socialRating} icon={Users} color="hsl(280,80%,60%)" />
+        )}
         {agent.needs.faith != null && (
           <NeedsBar label="Вера" value={agent.needs.faith} icon={Star} color="hsl(35,90%,55%)" />
         )}
