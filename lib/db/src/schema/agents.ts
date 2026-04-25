@@ -19,6 +19,8 @@ export const agentsTable = pgTable("agents", {
   locationY: real("location_y").notNull().default(0),
   careerLevel: integer("career_level").notNull().default(1),
   ambition: real("ambition").notNull().default(50),
+  strength: real("strength").notNull().default(50),
+  intelligence: real("intelligence").notNull().default(50),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -6,7 +6,7 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, ShoppingBasket, Shield, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, ShoppingBasket, Shield, Brain, Bolt, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Consumer preference matrix (spec v1.6) ────────────────────────────────────
@@ -185,6 +185,40 @@ export default function AgentDetailPage() {
           </div>
         </div>
       </div>
+
+      {(agent.strength != null || agent.intelligence != null) && (
+        <div className="bg-card border border-card-border rounded p-4 space-y-3">
+          <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Атрибуты</h2>
+          <div className="grid grid-cols-2 gap-4">
+            {agent.strength != null && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Bolt className="w-3 h-3 text-[hsl(43,100%,50%)]" />
+                  <span className="text-xs text-muted-foreground">Сила</span>
+                  <span className="ml-auto text-xs font-semibold text-[hsl(43,100%,50%)]">{agent.strength.toFixed(0)}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full rounded-full bg-[hsl(43,100%,50%)]" style={{ width: `${agent.strength}%` }} />
+                </div>
+                <p className="text-[10px] text-muted-foreground/60">Влияет на ограбление и износ здоровья</p>
+              </div>
+            )}
+            {agent.intelligence != null && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Brain className="w-3 h-3 text-[hsl(270,70%,60%)]" />
+                  <span className="text-xs text-muted-foreground">Интеллект</span>
+                  <span className="ml-auto text-xs font-semibold text-[hsl(270,70%,60%)]">{agent.intelligence.toFixed(0)}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full rounded-full bg-[hsl(270,70%,60%)]" style={{ width: `${agent.intelligence}%` }} />
+                </div>
+                <p className="text-[10px] text-muted-foreground/60">Ускоряет обучение и продвижение по карьере</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="bg-card border border-card-border rounded p-4 space-y-4">
         <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Потребности</h2>

@@ -890,6 +890,8 @@ class SimulationEngine {
         locationY: rand(0, 1000),
         careerLevel: 1,
         ambition: randInt(20, 100),
+        strength: rand(30, 90),
+        intelligence: rand(30, 90),
       });
     }
 
@@ -1206,7 +1208,9 @@ class SimulationEngine {
 
         if (agent.careerLevel < careerTarget && agent.employerId != null && tenure >= 48) {
           // Ambition-driven promotion attempt at current employer (~4%×ambition per tick)
-          const promotionProb = (agent.ambition / 100) * 0.04;
+          // Интеллект даёт бонус к продвижению: intel=50 → +0%, intel=90 → +4%
+          const intelligenceBonus = ((agent.intelligence ?? 50) - 50) * 0.001;
+          const promotionProb = (agent.ambition / 100) * 0.04 + intelligenceBonus;
           if (Math.random() < promotionProb) {
             agent.careerLevel = Math.min(5, agent.careerLevel + 1);
             const biz = this.businesses.get(agent.employerId);
@@ -1270,12 +1274,14 @@ class SimulationEngine {
       // ── Robbery (Грабёж) ─────────────────────────────────────────────────
       // Desperate unemployed agent (money < 20, financialSafety < 25) has a
       // small chance to rob a random other agent (spec: "ограбить при фин. кризисе")
+      // Сила вора повышает шанс ограбления; Сила жертвы снижает урон по physicalSafety
+      const robberyChance = 0.01 + (agent.strength ?? 50) * 0.0001; // 50→1.5%, 90→1.9%
       if (!agent.isRetired
           && agent.jailedUntilTick == null
           && agent.employerId == null
           && agent.money < 20
           && agent.needs.financialSafety < 25
-          && Math.random() < 0.015) {
+          && Math.random() < robberyChance) {
         const potentialVictims = Array.from(this.agents.values())
           .filter(v => v.id !== agent.id && !v.isRetired && v.jailedUntilTick == null && v.money > 30);
         if (potentialVictims.length > 0) {
@@ -1287,17 +1293,19 @@ class SimulationEngine {
           agent.mood = clamp(agent.mood + rand(3, 8));
           agent.currentAction = "rob";
           agent.recentActions = ["rob", ...agent.recentActions].slice(0, 10);
-          // Thief gets jailed (15 game days = 360 ticks) with 30% chance (police catch)
-          if (Math.random() < 0.3) {
+          // Слабый вор (низкая Сила) чаще попадается; сильный — чаще уходит
+          const arrestChance = 0.45 - (agent.strength ?? 50) * 0.003; // 50→30%, 90→18%
+          if (Math.random() < arrestChance) {
             agent.jailedUntilTick = this.state.tick + 360;
             agent.mood = clamp(agent.mood - rand(20, 35));
           } else {
             // Evaded but mood penalty from guilt
             agent.mood = clamp(agent.mood - rand(5, 10));
           }
-          // Victim loses money and physicalSafety drops by 50 (spec: −50 при нападении)
+          // Жертва с высокой Силой теряет меньше physicalSafety
+          const safetyLoss = Math.round(55 - (victim.strength ?? 50) * 0.2); // 50→45, 90→37, 10→53
           victim.money = Math.max(0, victim.money - stolen);
-          victim.needs.physicalSafety = clamp(victim.needs.physicalSafety - 50);
+          victim.needs.physicalSafety = clamp(victim.needs.physicalSafety - safetyLoss);
           victim.mood = clamp(victim.mood - rand(8, 15));
           victim.recentActions = ["robbed", ...victim.recentActions].slice(0, 10);
         }
@@ -1359,7 +1367,8 @@ class SimulationEngine {
       if (agent.needs.hunger < 30) healthDelta -= 0.8;  // starvation hurts
       if (agent.needs.sleep < 20) healthDelta -= 1.2;   // exhaustion hurts
       if (agent.needs.hunger > 50 && agent.needs.sleep > 50) healthDelta += 0.2; // natural recovery
-      healthDelta -= 0.01; // slow aging wear (reduced to prevent unnecessary deaths)
+      // Сила снижает возрастной износ: strength=50 → -0.01, strength=90 → -0.006, strength=10 → -0.014
+      healthDelta -= 0.02 - (agent.strength ?? 50) * 0.0002;
       agent.needs.health = clamp(agent.needs.health + healthDelta);
 
       const criticalNeed = this.getCriticalNeed(agent.needs);
@@ -1473,10 +1482,14 @@ class SimulationEngine {
         const schoolGood = this.pickAvailableGood("school");
         if (schoolGood) {
           const cost = schoolGood.currentPrice;
+          // Интеллект усиливает усвоение знаний: intel=50 → ×1.0, intel=90 → ×1.4
+          const intelFactor = 0.5 + (agent.intelligence ?? 50) / 100;
           // Agent uses service for free
-          agent.needs.education = clamp(agent.needs.education + rand(25, 45));
+          agent.needs.education = clamp(agent.needs.education + rand(25, 45) * intelFactor);
           agent.needs.comfort = clamp(agent.needs.comfort + rand(3, 8));
           agent.currentAction = "study";
+          // Учёба медленно повышает Интеллект (max 100)
+          agent.intelligence = Math.min(100, (agent.intelligence ?? 50) + rand(0.1, 0.3));
           schoolGood.demand = clamp(schoolGood.demand + 1, 0, 200);
           schoolGood.supply = clamp(schoolGood.supply - 1, 0, 200);
           // Government pays the school
@@ -1487,8 +1500,9 @@ class SimulationEngine {
           gdp += cost;
           dbgSuccessful++;
         } else {
-          // No school available — self-study at home
-          agent.needs.education = clamp(agent.needs.education + rand(8, 15));
+          // No school available — self-study at home (intelligence still helps)
+          const intelFactorSelf = 0.5 + (agent.intelligence ?? 50) / 100;
+          agent.needs.education = clamp(agent.needs.education + rand(8, 15) * intelFactorSelf);
           agent.currentAction = "study";
         }
       } else if (criticalNeed === "entertainment") {
@@ -1898,6 +1912,8 @@ class SimulationEngine {
         locationY: rand(0, 1000),
         careerLevel: 1,
         ambition: randInt(20, 100),
+        strength: rand(30, 90),
+        intelligence: rand(30, 90),
       });
     }
 
@@ -2198,6 +2214,8 @@ class SimulationEngine {
             jobHistory: JSON.stringify(agent.jobHistory.slice(-50)),
             careerLevel: agent.careerLevel,
             ambition: agent.ambition,
+            strength: agent.strength,
+            intelligence: agent.intelligence,
           })
           .where(eq(agentsTable.id, agent.id));
         await db.update(needsTable)
@@ -2489,6 +2507,8 @@ class SimulationEngine {
       careerLevel: agent.careerLevel,
       ambition: Math.round(agent.ambition),
       targetCareerLevel: targetGrade(agent.ambition),
+      strength: Math.round((agent.strength ?? 50) * 10) / 10,
+      intelligence: Math.round((agent.intelligence ?? 50) * 10) / 10,
     };
   }
 

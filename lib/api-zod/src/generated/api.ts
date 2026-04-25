@@ -177,6 +177,8 @@ export const GetAgentResponse = zod.object({
   "careerLevel": zod.number().optional(),
   "ambition": zod.number().optional(),
   "targetCareerLevel": zod.number().optional(),
+  "strength": zod.number().optional(),
+  "intelligence": zod.number().optional(),
 }))
 
 

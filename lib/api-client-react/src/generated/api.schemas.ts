@@ -93,6 +93,10 @@ export type AgentDetail = Agent & {
   ambition?: number;
   /** Target career grade derived from ambition */
   targetCareerLevel?: number;
+  /** Physical strength attribute 1-100 */
+  strength?: number;
+  /** Intelligence attribute 1-100 */
+  intelligence?: number;
 };
 
 export interface AgentListResponse {
