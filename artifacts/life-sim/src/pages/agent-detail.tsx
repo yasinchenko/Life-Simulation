@@ -6,7 +6,7 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, ShoppingBasket, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, ShoppingBasket, Shield, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Consumer preference matrix (spec v1.6) ────────────────────────────────────
@@ -66,6 +66,10 @@ const ACTION_LABELS: Record<string, string> = {
   study: "Учится",
   relax: "Развлекается",
   pray: "Молится",
+  rob: "Грабит",
+  robbed: "Ограблен",
+  call_police: "Вызывает полицию",
+  jailed: "Под стражей",
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -79,6 +83,10 @@ const ACTION_COLORS: Record<string, string> = {
   study: "bg-[hsl(270,70%,60%)]/10 text-[hsl(270,70%,60%)] border-[hsl(270,70%,60%)]/30",
   relax: "bg-[hsl(120,60%,45%)]/10 text-[hsl(120,60%,45%)] border-[hsl(120,60%,45%)]/30",
   pray: "bg-[hsl(35,90%,55%)]/10 text-[hsl(35,90%,55%)] border-[hsl(35,90%,55%)]/30",
+  rob: "bg-[hsl(0,80%,40%)]/10 text-[hsl(0,80%,55%)] border-[hsl(0,80%,55%)]/30",
+  robbed: "bg-[hsl(0,80%,40%)]/10 text-[hsl(0,80%,40%)] border-[hsl(0,80%,40%)]/30",
+  call_police: "bg-[hsl(210,100%,50%)]/10 text-[hsl(210,100%,50%)] border-[hsl(210,100%,50%)]/30",
+  jailed: "bg-[hsl(0,0%,40%)]/10 text-[hsl(0,0%,60%)] border-[hsl(0,0%,40%)]/30",
 };
 
 function NeedsBar({ label, value, icon: Icon, color }: { label: string; value: number; icon: LucideIcon; color: string }) {
@@ -196,6 +204,9 @@ export default function AgentDetailPage() {
         )}
         {agent.needs.housingSafety != null && (
           <NeedsBar label="Жилищная безопасность" value={agent.needs.housingSafety} icon={Home} color="hsl(195,80%,45%)" />
+        )}
+        {agent.needs.physicalSafety != null && (
+          <NeedsBar label="Физ. безопасность" value={agent.needs.physicalSafety} icon={Shield} color="hsl(0,80%,55%)" />
         )}
         {agent.needs.faith != null && (
           <NeedsBar label="Вера" value={agent.needs.faith} icon={Star} color="hsl(35,90%,55%)" />

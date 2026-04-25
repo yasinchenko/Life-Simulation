@@ -57,12 +57,13 @@ interface JobHistoryEntry {
 }
 
 interface AgentState extends Agent {
-  needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number };
+  needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number };
   needsId: number;
   recentActions: string[];
   jobHistory: JobHistoryEntry[];
   jobStartTick: number | null;
   // careerLevel and ambition come from Agent (DB schema)
+  jailedUntilTick: number | null; // in-memory only — resets on restart
 }
 
 interface BusinessState extends Business {
@@ -450,7 +451,7 @@ class SimulationEngine {
   private async loadAgents(): Promise<void> {
     const agentRows = await db.select().from(agentsTable).limit(5000);
     const needsRows = await db.select().from(needsTable);
-    const needsMap = new Map<number, { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; id: number }>();
+    const needsMap = new Map<number, { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number; id: number }>();
     for (const n of needsRows) {
       needsMap.set(n.agentId, {
         hunger: n.hunger, comfort: n.comfort, social: n.social,
@@ -458,21 +459,23 @@ class SimulationEngine {
         education: n.education ?? 70, entertainment: n.entertainment ?? 70, faith: n.faith ?? 60,
         housingSafety: n.housingSafety ?? 80,
         financialSafety: n.financialSafety ?? 80,
+        physicalSafety: n.physicalSafety ?? 80,
         id: n.id,
       });
     }
     this.agents.clear();
     for (const agent of agentRows) {
-      const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, health: 80, sleep: 80, education: 70, entertainment: 70, faith: 60, housingSafety: 80, financialSafety: 80, id: 0 };
+      const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, health: 80, sleep: 80, education: 70, entertainment: 70, faith: 60, housingSafety: 80, financialSafety: 80, physicalSafety: 80, id: 0 };
       let jobHistory: JobHistoryEntry[] = [];
       try { jobHistory = JSON.parse(agent.jobHistory ?? "[]"); } catch { jobHistory = []; }
       // Derive jobStartTick from last "hired" entry in job history
       const lastHired = [...jobHistory].reverse().find(e => e.event === "hired");
       this.agents.set(agent.id, {
         ...agent,
-        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health, sleep: needs.sleep, education: needs.education, entertainment: needs.entertainment, faith: needs.faith, housingSafety: needs.housingSafety, financialSafety: needs.financialSafety },
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health, sleep: needs.sleep, education: needs.education, entertainment: needs.entertainment, faith: needs.faith, housingSafety: needs.housingSafety, financialSafety: needs.financialSafety, physicalSafety: needs.physicalSafety },
         needsId: needs.id, recentActions: [], jobHistory,
         jobStartTick: agent.employerId ? (lastHired?.tick ?? 0) : null,
+        jailedUntilTick: null,
       });
     }
   }
@@ -905,6 +908,7 @@ class SimulationEngine {
         faith: rand(30, 70),
         housingSafety: rand(60, 95),
         financialSafety: rand(60, 95),
+        physicalSafety: rand(70, 95),
       }));
 
       const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
@@ -916,11 +920,12 @@ class SimulationEngine {
         if (!needs) continue;
         this.agents.set(agent.id, {
           ...agent,
-          needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80, education: needs.education ?? 70, entertainment: needs.entertainment ?? 70, faith: needs.faith ?? 60, housingSafety: needs.housingSafety ?? 80, financialSafety: needs.financialSafety ?? 80 },
+          needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80, education: needs.education ?? 70, entertainment: needs.entertainment ?? 70, faith: needs.faith ?? 60, housingSafety: needs.housingSafety ?? 80, financialSafety: needs.financialSafety ?? 80, physicalSafety: needs.physicalSafety ?? 80 },
           needsId: needs.id,
           recentActions: [],
           jobHistory: agent.employerId ? [{ tick: 0, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }] : [],
           jobStartTick: agent.employerId ? 0 : null,
+          jailedUntilTick: null,
         });
         if (agent.employerId) {
           const biz = this.businesses.get(agent.employerId);
@@ -1238,6 +1243,57 @@ class SimulationEngine {
         }
       }
 
+      // ── Robbery (Грабёж) ─────────────────────────────────────────────────
+      // Desperate unemployed agent (money < 20, financialSafety < 25) has a
+      // small chance to rob a random other agent (spec: "ограбить при фин. кризисе")
+      if (!agent.isRetired
+          && agent.jailedUntilTick == null
+          && agent.employerId == null
+          && agent.money < 20
+          && agent.needs.financialSafety < 25
+          && Math.random() < 0.015) {
+        const potentialVictims = Array.from(this.agents.values())
+          .filter(v => v.id !== agent.id && !v.isRetired && v.jailedUntilTick == null && v.money > 30);
+        if (potentialVictims.length > 0) {
+          const victim = pick(potentialVictims);
+          const stolen = rand(15, 40);
+          // Thief gains money, brief mood boost, financialSafety rises
+          agent.money += stolen;
+          agent.needs.financialSafety = clamp(agent.needs.financialSafety + 25);
+          agent.mood = clamp(agent.mood + rand(3, 8));
+          agent.currentAction = "rob";
+          agent.recentActions = ["rob", ...agent.recentActions].slice(0, 10);
+          // Thief gets jailed (15 game days = 360 ticks) with 30% chance (police catch)
+          if (Math.random() < 0.3) {
+            agent.jailedUntilTick = this.state.tick + 360;
+            agent.mood = clamp(agent.mood - rand(20, 35));
+          } else {
+            // Evaded but mood penalty from guilt
+            agent.mood = clamp(agent.mood - rand(5, 10));
+          }
+          // Victim loses money and physicalSafety drops by 50 (spec: −50 при нападении)
+          victim.money = Math.max(0, victim.money - stolen);
+          victim.needs.physicalSafety = clamp(victim.needs.physicalSafety - 50);
+          victim.mood = clamp(victim.mood - rand(8, 15));
+          victim.recentActions = ["robbed", ...victim.recentActions].slice(0, 10);
+        }
+      }
+
+      // Jailed agents skip action processing this tick
+      if (agent.jailedUntilTick != null) {
+        if (this.state.tick >= agent.jailedUntilTick) {
+          agent.jailedUntilTick = null; // Released
+          agent.mood = clamp(agent.mood + rand(3, 8));
+        } else {
+          agent.currentAction = "jailed";
+          // Still apply need decay below, but skip criticalNeed action
+          agent.needs.hunger = clamp(agent.needs.hunger - needDecayRate * rand(0.5, 1.5));
+          agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
+          agent.needs.sleep = clamp(agent.needs.sleep - 2.5 * rand(0.8, 1.2));
+          continue;
+        }
+      }
+
       agent.needs.hunger = clamp(agent.needs.hunger - needDecayRate * rand(0.5, 1.5));
       agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
       agent.needs.social = clamp(agent.needs.social - needDecayRate * rand(0.4, 1.2));
@@ -1267,6 +1323,11 @@ class SimulationEngine {
         }
       } else {
         agent.needs.housingSafety = clamp(agent.needs.housingSafety + 0.25);
+      }
+
+      // Physical safety: no natural decay — only drops via robbery; slowly self-recovers
+      if (agent.needs.physicalSafety < 80) {
+        agent.needs.physicalSafety = clamp(agent.needs.physicalSafety + 0.4);
       }
 
       // Health dynamics
@@ -1515,6 +1576,12 @@ class SimulationEngine {
             agent.currentAction = "idle";
           }
         }
+      } else if (criticalNeed === "physicalSafety") {
+        // Обращение в полицию: agent reports the robbery (spec: "Обратиться в полицию")
+        agent.currentAction = "call_police";
+        // Reporting to police gradually restores a sense of safety
+        agent.needs.physicalSafety = clamp(agent.needs.physicalSafety + rand(12, 22));
+        agent.mood = clamp(agent.mood + rand(3, 7));
       } else {
         if (agent.employerId) {
           const salary = calcSalary(baseSalary, agent.careerLevel);
@@ -1545,7 +1612,8 @@ class SimulationEngine {
           (agent.needs.entertainment - 50) * 0.004 +
           (agent.needs.faith - 50) * 0.002 +
           (agent.needs.financialSafety - 50) * 0.006 +
-          (agent.needs.housingSafety - 50) * 0.005
+          (agent.needs.housingSafety - 50) * 0.005 +
+          (agent.needs.physicalSafety - 50) * 0.007
       );
 
       // Subsidy: once per game day only, capped at subsidyAmount per day
@@ -1806,6 +1874,7 @@ class SimulationEngine {
       faith: rand(40, 70),
       housingSafety: rand(65, 95),
       financialSafety: rand(60, 90),
+      physicalSafety: rand(70, 95),
     }));
     const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
     const needsMap = new Map<number, typeof savedNeeds[0]>();
@@ -1816,13 +1885,14 @@ class SimulationEngine {
       if (!needs) continue;
       this.agents.set(agent.id, {
         ...agent,
-        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80, education: needs.education ?? 70, entertainment: needs.entertainment ?? 70, faith: needs.faith ?? 60, housingSafety: needs.housingSafety ?? 80, financialSafety: needs.financialSafety ?? 80 },
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80, education: needs.education ?? 70, entertainment: needs.entertainment ?? 70, faith: needs.faith ?? 60, housingSafety: needs.housingSafety ?? 80, financialSafety: needs.financialSafety ?? 80, physicalSafety: needs.physicalSafety ?? 80 },
         needsId: needs.id,
         recentActions: [],
         jobHistory: agent.employerId
           ? [{ tick: this.state.tick, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }]
           : [],
         jobStartTick: agent.employerId ? this.state.tick : null,
+        jailedUntilTick: null,
       });
       if (agent.employerId) {
         const biz = this.businesses.get(agent.employerId);
@@ -1831,14 +1901,15 @@ class SimulationEngine {
     }
   }
 
-  private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number }): string {
+  private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number }): string {
     // Priority 1-4: critical physical needs
     if (needs.health < 20) return "health";
     if (needs.sleep < 25) return "sleep";
     if (needs.hunger < 30) return "hunger";
-    // Priority 5-6: safety needs (trigger before social/entertainment)
+    // Priority 5-7: safety needs (trigger before social/entertainment)
     if (needs.financialSafety < 30) return "financialSafety";
     if (needs.housingSafety < 25) return "housingSafety";
+    if (needs.physicalSafety < 40) return "physicalSafety";
     // Priority 7+: secondary social/growth needs — any below 25 triggers action
     const secondary: Array<[string, number]> = [
       ["comfort", needs.comfort],
@@ -2085,7 +2156,7 @@ class SimulationEngine {
           })
           .where(eq(agentsTable.id, agent.id));
         await db.update(needsTable)
-          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social, health: agent.needs.health, sleep: agent.needs.sleep, education: agent.needs.education, entertainment: agent.needs.entertainment, faith: agent.needs.faith, housingSafety: agent.needs.housingSafety, financialSafety: agent.needs.financialSafety })
+          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social, health: agent.needs.health, sleep: agent.needs.sleep, education: agent.needs.education, entertainment: agent.needs.entertainment, faith: agent.needs.faith, housingSafety: agent.needs.housingSafety, financialSafety: agent.needs.financialSafety, physicalSafety: agent.needs.physicalSafety })
           .where(eq(needsTable.agentId, agent.id));
       }
     }
@@ -2361,6 +2432,7 @@ class SimulationEngine {
         faith: Math.round(agent.needs.faith * 10) / 10,
         housingSafety: Math.round(agent.needs.housingSafety * 10) / 10,
         financialSafety: Math.round(agent.needs.financialSafety * 10) / 10,
+        physicalSafety: Math.round(agent.needs.physicalSafety * 10) / 10,
       },
       // Career info
       employerName: agent.employerId ? (this.businesses.get(agent.employerId)?.name ?? null) : null,

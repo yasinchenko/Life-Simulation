@@ -48,6 +48,7 @@ export interface AgentNeeds {
   faith?: number;
   housingSafety?: number;
   financialSafety?: number;
+  physicalSafety?: number;
 }
 
 export interface AgentRelation {
