@@ -6,7 +6,7 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -142,24 +142,56 @@ export default function AgentDetailPage() {
         )}
       </div>
 
-      <div className="bg-card border border-card-border rounded p-4">
-        <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-2">Работа</h2>
-        {agent.isRetired ? (
-          <div className="flex items-center gap-2 text-xs">
-            <Sunset className="w-3.5 h-3.5 text-[hsl(43,100%,50%)]" />
-            <span className="text-[hsl(43,100%,50%)] font-medium">На пенсии</span>
+      <div className="bg-card border border-card-border rounded p-4 space-y-3">
+        <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Карьера</h2>
+
+        {/* Current status */}
+        <div className="flex items-start gap-3">
+          {agent.isRetired ? (
+            <div className="flex items-center gap-2 text-xs">
+              <Sunset className="w-4 h-4 text-[hsl(43,100%,50%)] shrink-0" />
+              <div>
+                <span className="text-[hsl(43,100%,50%)] font-medium">На пенсии</span>
+                <p className="text-muted-foreground mt-0.5">Завершил трудовую деятельность</p>
+              </div>
+            </div>
+          ) : agent.employerId != null ? (
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-xs mb-2">
+                <Briefcase className="w-3.5 h-3.5 text-[hsl(173,80%,40%)] shrink-0" />
+                <span className="font-medium text-[hsl(173,80%,40%)]">Работает</span>
+              </div>
+              <p className="text-sm font-medium text-foreground">{agent.employerName ?? `Бизнес #${agent.employerId}`}</p>
+              {agent.jobTenure != null && (
+                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  <span>Стаж: {Math.floor(agent.jobTenure / 24)} дн. {agent.jobTenure % 24} ч.</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs">
+              <Briefcase className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <span className="text-muted-foreground">Безработный · ищет работу</span>
+            </div>
+          )}
+        </div>
+
+        {/* Career stats */}
+        <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/30">
+          <div className="text-center">
+            <p className="text-lg font-bold text-foreground">{agent.totalJobs ?? 0}</p>
+            <p className="text-[10px] text-muted-foreground">мест работы</p>
           </div>
-        ) : agent.employerId != null ? (
-          <div className="flex items-center gap-2 text-xs">
-            <Briefcase className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-foreground">Бизнес #{agent.employerId}</span>
+          <div className="text-center">
+            <p className="text-lg font-bold text-[hsl(43,100%,50%)]">{agent.promotions ?? 0}</p>
+            <p className="text-[10px] text-muted-foreground">повышений</p>
           </div>
-        ) : (
-          <div className="flex items-center gap-2 text-xs">
-            <Briefcase className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-muted-foreground">Безработный</span>
+          <div className="text-center">
+            <p className="text-lg font-bold text-foreground">{agent.jobHistory?.filter((e: JobHistoryEntry) => e.event === "quit").length ?? 0}</p>
+            <p className="text-[10px] text-muted-foreground">уволился сам</p>
           </div>
-        )}
+        </div>
       </div>
 
       {agent.recentActions && agent.recentActions.length > 0 && (
@@ -188,32 +220,49 @@ export default function AgentDetailPage() {
       {agent.jobHistory && agent.jobHistory.length > 0 && (
         <div className="bg-card border border-card-border rounded p-4">
           <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground mb-3">
-            История работы ({agent.jobHistory.length})
+            Карьерный путь ({agent.jobHistory.length})
           </h2>
-          <div className="space-y-2">
+          <div className="space-y-0">
             {agent.jobHistory.map((entry: JobHistoryEntry, i: number) => {
-              const isHired = entry.event === "hired";
-              const isFired = entry.event === "fired";
-              const isRetiredEvent = entry.event === "retired";
+              const isHired      = entry.event === "hired";
+              const isFired      = entry.event === "fired";
+              const isRetiredEvt = entry.event === "retired";
+              const isQuit       = entry.event === "quit";
+              const isPromoted   = entry.event === "promoted";
+              const gameDay = Math.floor(entry.tick / 24) + 1;
+              const durationDays = entry.duration != null ? Math.floor(entry.duration / 24) : null;
               return (
-                <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border/50 last:border-0">
-                  <div className="flex items-center gap-2">
-                    {isHired && <LogIn className="w-3 h-3 text-[hsl(173,80%,40%)] shrink-0" />}
-                    {isFired && <LogOut className="w-3 h-3 text-destructive shrink-0" />}
-                    {isRetiredEvent && <Sunset className="w-3 h-3 text-[hsl(43,100%,50%)] shrink-0" />}
-                    <span className={cn(
-                      "font-medium",
-                      isHired && "text-[hsl(173,80%,40%)]",
-                      isFired && "text-destructive",
-                      isRetiredEvent && "text-[hsl(43,100%,50%)]",
-                    )}>
-                      {isHired ? "Нанят" : isFired ? "Уволен" : "Выход на пенсию"}
-                    </span>
+                <div key={i} className="flex items-start gap-3 py-2 border-b border-border/30 last:border-0">
+                  <div className="mt-0.5 shrink-0">
+                    {isHired      && <LogIn      className="w-3.5 h-3.5 text-[hsl(173,80%,40%)]" />}
+                    {isFired      && <LogOut     className="w-3.5 h-3.5 text-destructive" />}
+                    {isRetiredEvt && <Sunset     className="w-3.5 h-3.5 text-[hsl(43,100%,50%)]" />}
+                    {isQuit       && <DoorOpen   className="w-3.5 h-3.5 text-[hsl(280,80%,60%)]" />}
+                    {isPromoted   && <TrendingUp className="w-3.5 h-3.5 text-[hsl(120,60%,45%)]" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={cn(
+                        "text-xs font-medium",
+                        isHired      && "text-[hsl(173,80%,40%)]",
+                        isFired      && "text-destructive",
+                        isRetiredEvt && "text-[hsl(43,100%,50%)]",
+                        isQuit       && "text-[hsl(280,80%,60%)]",
+                        isPromoted   && "text-[hsl(120,60%,45%)]",
+                      )}>
+                        {isHired ? "Принят на работу" : isFired ? "Уволен" : isRetiredEvt ? "Вышел на пенсию" : isQuit ? "Уволился сам" : "Повышен"}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">День {gameDay}</span>
+                    </div>
                     {entry.businessName && (
-                      <span className="text-muted-foreground">· {entry.businessName}</span>
+                      <p className="text-[10px] text-muted-foreground truncate mt-0.5">{entry.businessName}</p>
+                    )}
+                    {durationDays != null && durationDays > 0 && (
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        проработал {durationDays} дн.
+                      </p>
                     )}
                   </div>
-                  <span className="text-muted-foreground tabular-nums text-[10px]">тик {entry.tick}</span>
                 </div>
               );
             })}

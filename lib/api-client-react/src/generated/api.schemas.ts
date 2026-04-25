@@ -56,11 +56,12 @@ export interface AgentRelation {
 
 export interface JobHistoryEntry {
   tick: number;
-  event: 'hired' | 'fired' | 'retired';
+  event: 'hired' | 'fired' | 'retired' | 'quit' | 'promoted';
   /** @nullable */
   businessId: number | null;
   /** @nullable */
   businessName: string | null;
+  duration?: number;
 }
 
 export type AgentDetail = Agent & {
@@ -72,6 +73,16 @@ export type AgentDetail = Agent & {
   isRetired: boolean;
   /** Most recent 20 job events for this agent */
   jobHistory: JobHistoryEntry[];
+  /** Name of current employer */
+  employerName?: string | null;
+  /** Tick when current job started */
+  jobStartTick?: number | null;
+  /** Ticks at current job */
+  jobTenure?: number | null;
+  /** Total number of jobs held */
+  totalJobs?: number;
+  /** Number of promotions received */
+  promotions?: number;
 };
 
 export interface AgentListResponse {
