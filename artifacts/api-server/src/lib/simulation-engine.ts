@@ -68,10 +68,23 @@ interface AgentState extends Agent {
 
 interface BusinessState extends Business {
   employeeCount: number;
+  maxEmployees: number;      // computed from type, not stored in DB
   firedThisTick: number;
   hiredThisTick: number;
   ticksUnprofitable: number; // how many consecutive ticks with negative balance
 }
+
+// Max hiring capacity per business type
+const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = {
+  food:     5,
+  service:  6,
+  farm:     8,
+  workshop: 7,
+  hospital: 12,
+  school:   10,
+  park:     8,
+  temple:   6,
+};
 
 interface GoodState extends Good {}
 
@@ -550,7 +563,7 @@ class SimulationEngine {
       }
     }
     for (const b of rows) {
-      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
   }
 
@@ -586,7 +599,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const goodInserts = savedBiz.map(b => ({
@@ -642,7 +655,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const goodInserts = savedBiz.map(b => {
@@ -691,7 +704,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const goodInserts = savedBiz.map(b => {
@@ -790,7 +803,7 @@ class SimulationEngine {
 
     const savedBusinesses = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBusinesses) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const foodBusinessIds = savedBusinesses.filter(b => b.type === "food").map(b => b.id);
@@ -1420,12 +1433,16 @@ class SimulationEngine {
       }
 
       // Health dynamics
+      // Model: health requires active medical care to stay high.
+      // Base entropy (aging) drains health every tick; hospitals are the primary cure.
+      // Strength slows the drain; hunger/sleep crisis accelerates it.
       let healthDelta = 0;
-      if (agent.needs.hunger < 30) healthDelta -= 0.8;  // starvation hurts
-      if (agent.needs.sleep < 20) healthDelta -= 1.2;   // exhaustion hurts
-      if (agent.needs.hunger > 50 && agent.needs.sleep > 50) healthDelta += 0.2; // natural recovery
-      // Сила снижает возрастной износ: strength=50 → -0.01, strength=90 → -0.006, strength=10 → -0.014
-      healthDelta -= 0.02 - (agent.strength ?? 50) * 0.0002;
+      if (agent.needs.hunger < 30) healthDelta -= 1.0;  // starvation hurts
+      if (agent.needs.sleep < 20) healthDelta -= 1.5;   // exhaustion hurts
+      // Mild recovery when very well-fed and rested (eating healthy helps, but not enough alone)
+      if (agent.needs.hunger > 70 && agent.needs.sleep > 70) healthDelta += 0.05;
+      // Base entropy: strength=50 → -0.12/tick, strength=90 → -0.08/tick, strength=10 → -0.16/tick
+      healthDelta -= 0.15 - (agent.strength ?? 50) * 0.001;
       agent.needs.health = clamp(agent.needs.health + healthDelta);
 
       const criticalNeed = this.getCriticalNeed(agent.needs);
@@ -1443,7 +1460,7 @@ class SimulationEngine {
           agent.money -= hospitalGood.currentPrice;
           // Качество влияет на восстановление здоровья (quality=50 → ×1.0, 100 → ×1.3, 0 → ×0.7)
           const hospQMult = 0.7 + hospitalGood.quality * 0.006;
-          agent.needs.health = clamp(agent.needs.health + rand(15, 28) * hospQMult);
+          agent.needs.health = clamp(agent.needs.health + rand(20, 35) * hospQMult);
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
           agent.currentAction = "heal";
           hospitalGood.demand = clamp(hospitalGood.demand + 1, 0, 200);
@@ -2136,14 +2153,14 @@ class SimulationEngine {
   }
 
   private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number; socialRating: number; wellbeing: number }): string {
-    // Priority 1-4: critical physical needs — thresholds aligned with spec v1.6
-    if (needs.health < 50) return "health";       // spec: < 60
-    if (needs.sleep < 45) return "sleep";          // spec: < 50
-    if (needs.hunger < 55) return "hunger";        // spec: < 70
+    // Priority 1-4: critical physical needs — thresholds ensure frequent service usage
+    if (needs.health < 80) return "health";            // raised: 80 = agents visit hospital regularly for maintenance
+    if (needs.sleep < 45) return "sleep";
+    if (needs.hunger < 55) return "hunger";
     // Priority 5-7: safety needs (trigger before social/entertainment)
     if (needs.financialSafety < 30) return "financialSafety";
     if (needs.housingSafety < 25) return "housingSafety";
-    if (needs.physicalSafety < 45) return "physicalSafety"; // spec: < 50
+    if (needs.physicalSafety < 45) return "physicalSafety";
     // Priority 8+: secondary social/growth needs — individual thresholds per spec
     // socialRating: lower threshold (30) since it moves slowly (daily recalc)
     if (needs.socialRating < 30) return "socialRating";
@@ -2157,11 +2174,11 @@ class SimulationEngine {
     ];
     const thresholds: Record<string, number> = {
       comfort: 35,
-      social: 45,        // decay now much slower, so threshold can be higher
-      entertainment: 50, // spec: < 60
-      education: 30,
-      faith: 30,
-      wellbeing: 35,     // желаемый уровень жизни: срабатывает при < 35
+      social: 45,
+      entertainment: 60, // raised: 50 → 60; parks used more often
+      education: 45,     // raised: 30 → 45; schools used more often
+      faith: 45,         // raised: 30 → 45; temples used more often
+      wellbeing: 35,
     };
     const critical = secondary.filter(([name, v]) => v < (thresholds[name] ?? 30));
     if (critical.length > 0) {
@@ -2365,23 +2382,33 @@ class SimulationEngine {
       good.currentPrice = Math.max(base * 0.3, Math.min(priceCeiling, newPrice));
 
       // ── Supply/demand natural dynamics per business tier ──────────────────
-      if (bizType === "farm") {
-        // Raw material producers: high output
-        good.supply = clamp(good.supply + rand(4, 10), 0, 200);
-        good.demand = clamp(good.demand - rand(1, 3), 0, 200);
-      } else if (bizType === "workshop") {
-        // Manufacturing: steady output
-        good.supply = clamp(good.supply + rand(3, 8), 0, 200);
-        good.demand = clamp(good.demand - rand(1, 2), 0, 200);
+      if (bizType === "farm" || bizType === "workshop") {
+        // Raw/intermediate producers (B2B): supply is demand-driven.
+        // Demand here comes from B2B purchases by food/service businesses.
+        // When nobody is buying (demand≈0), excess stock should decay.
+        const rawRatio = good.supply / Math.max(good.demand, 1);
+        if (rawRatio > 4 || (good.demand < 3 && good.supply > 20)) {
+          // Severe overstock — nobody buying: heavy decay
+          good.supply = clamp(good.supply - rand(6, 12), 0, 200);
+        } else if (rawRatio > 2) {
+          // Moderate surplus
+          good.supply = clamp(good.supply - rand(2, 5), 0, 200);
+        } else {
+          // Healthy B2B demand: produce normally
+          const output = bizType === "farm" ? rand(4, 10) : rand(3, 8);
+          good.supply = clamp(good.supply + output, 0, 200);
+        }
+        // Demand only comes from actual B2B purchases; no artificial decay here
       } else if (bizType === "school" || bizType === "park" || bizType === "temple") {
-        // Public services: strong supply regeneration (capacity-based, not stock)
-        // High replenishment prevents extreme price spikes for essential services
-        good.supply = clamp(good.supply + rand(8, 16), 0, 200);
-        good.demand = clamp(good.demand - rand(2, 5), 0, 200);
+        // Public services: infinite capacity (supply = 200 always available).
+        // Demand ONLY rises when agents actually visit — no artificial decay.
+        good.supply = 200; // always at capacity
+        // demand decay removed — only real visits increment demand
       } else if (bizType === "hospital") {
-        // Healthcare: moderate supply recovery
-        good.supply = clamp(good.supply + rand(4, 8), 0, 200);
-        good.demand = clamp(good.demand - rand(1, 3), 0, 200);
+        // Healthcare: always available, capacity-based supply.
+        // Demand ONLY rises when sick agents visit — no artificial decay.
+        good.supply = 200; // always at capacity
+        // demand decay removed — only real sick-agent visits increment demand
       } else {
         // Consumer goods (food/service/retail): moderate replenishment
         // Productivity bonus: each invested level adds 0.1 × employeeCount extra supply
@@ -2416,7 +2443,7 @@ class SimulationEngine {
     // ── Bankruptcy thresholds ──────────────────────────────────────────────
     // Only commercial non-essential businesses can go bankrupt
     const BANKRUPT_TYPES = new Set(["food", "service"]);
-    const BANKRUPT_TICKS = 25;          // must be unprofitable for this many consecutive ticks
+    const BANKRUPT_TICKS = 40;          // must be unprofitable for this many consecutive ticks
     const BANKRUPT_SUPPLY_RATIO = 3.0;  // AND its good must be severely oversupplied (supply > demand×3)
     const BANKRUPT_BALANCE_CAP = -300;  // AND balance must be below this threshold
 
@@ -2475,7 +2502,7 @@ class SimulationEngine {
 
   private async processGovernmentGrants(): Promise<{ grantsIssued: number; totalSpent: number }> {
     const GRANT_AMOUNT = 3000;
-    const MAX_GRANTS_PER_DAY = 3;
+    const MAX_GRANTS_PER_DAY = 8; // raised: 3→8 to recover faster from mass bankruptcy waves
     const UNEMPLOYMENT_THRESHOLD = 0.28; // 28% unemployment triggers grants
 
     if (this.state.governmentBudget < GRANT_AMOUNT * 2) {
@@ -2584,6 +2611,7 @@ class SimulationEngine {
       this.businesses.set(newBiz.id, {
         ...newBiz,
         employeeCount: 1,
+        maxEmployees: MAX_EMPLOYEES_BY_TYPE[newBiz.type] ?? 5,
         firedThisTick: 0,
         hiredThisTick: 1,
         ticksUnprofitable: 0,
