@@ -93,7 +93,61 @@ const FEMALE_NAMES = [
   "Светлана", "Юлия", "Екатерина", "Алина", "Дарья", "Ксения", "Валерия",
   "Виктория", "Людмила", "Нина", "Алёна", "Марина", "Вера",
 ];
-const PERSONALITIES = ["активный", "спокойный", "общительный", "замкнутый", "трудолюбивый", "ленивый", "амбициозный"];
+const PERSONALITIES = ["сангвиник", "холерик", "флегматик", "меланхолик"];
+
+// Consumer preference matrix per spec v1.6 (Потребительская матрица)
+// Index: 0=Санг.Интр  1=Санг.Экстр  2=Хол.Интр  3=Хол.Экстр
+//        4=Флег.Интр  5=Флег.Экстр  6=Мел.Интр  7=Мел.Экстр
+// Tier: [priceLevel, qualityLevel] where each is "low"|"medium"|"high"
+type PriceQualityTier = ["low" | "medium" | "high", "low" | "medium" | "high"];
+const CONSUMER_MATRIX: Record<string, PriceQualityTier[]> = {
+  food: [
+    ["medium", "medium"], // 0 Санг Инт
+    ["high",   "high"],   // 1 Санг Экстр
+    ["high",   "high"],   // 2 Хол Инт
+    ["medium", "high"],   // 3 Хол Экстр
+    ["low",    "medium"], // 4 Флег Инт
+    ["medium", "medium"], // 5 Флег Экстр
+    ["high",   "high"],   // 6 Мел Инт
+    ["high",   "medium"], // 7 Мел Экстр
+  ],
+  park: [ // Развлекательные услуги
+    ["low",    "medium"], // 0 Санг Инт
+    ["high",   "medium"], // 1 Санг Экстр
+    ["low",    "high"],   // 2 Хол Инт
+    ["high",   "high"],   // 3 Хол Экстр
+    ["low",    "low"],    // 4 Флег Инт
+    ["medium", "medium"], // 5 Флег Экстр
+    ["low",    "medium"], // 6 Мел Инт
+    ["medium", "high"],   // 7 Мел Экстр
+  ],
+  service: [ // Бытовые товары / услуги
+    ["medium", "high"],   // 0 Санг Инт
+    ["high",   "high"],   // 1 Санг Экстр
+    ["medium", "medium"], // 2 Хол Инт
+    ["high",   "high"],   // 3 Хол Экстр
+    ["medium", "medium"], // 4 Флег Инт
+    ["low",    "medium"], // 5 Флег Экстр
+    ["medium", "medium"], // 6 Мел Инт
+    ["high",   "high"],   // 7 Мел Экстр
+  ],
+};
+
+/** Map (personality, socialization) → 0-7 index for CONSUMER_MATRIX */
+function getPersonalityIndex(personality: string, socialization: number): number {
+  const base: Record<string, number> = { "сангвиник": 0, "холерик": 2, "флегматик": 4, "меланхолик": 6 };
+  const b = base[personality] ?? 0;
+  return b + (socialization >= 50 ? 1 : 0); // extrovert = +1
+}
+
+/** Classify a good into price/quality tier relative to peers of the same type */
+function classifyGood(good: GoodState, peers: GoodState[]): PriceQualityTier {
+  const prices = peers.map(g => g.currentPrice).sort((a, b) => a - b);
+  const pIdx = prices.filter(p => p <= good.currentPrice).length / prices.length;
+  const priceLevel: "low" | "medium" | "high" = pIdx < 0.35 ? "low" : pIdx < 0.70 ? "medium" : "high";
+  const qualityLevel: "low" | "medium" | "high" = good.quality > 70 ? "high" : good.quality > 40 ? "medium" : "low";
+  return [priceLevel, qualityLevel];
+}
 const FOOD_BUSINESS_NAMES = ["Пекарня", "Кафе", "Столовая", "Ресторан", "Супермаркет", "Закусочная", "Продуктовый"];
 const SERVICE_BUSINESS_NAMES = ["Парикмахерская", "Магазин", "Сервисный центр", "Прачечная", "Ателье", "Аптека", "Химчистка"];
 const HOSPITAL_BUSINESS_NAMES = ["Городская больница", "Поликлиника", "Медицинский центр", "Амбулатория", "Клиника здоровья", "Медпункт"];
@@ -1137,7 +1191,7 @@ class SimulationEngine {
           agent.currentAction = "rest";
         }
       } else if (criticalNeed === "hunger") {
-        const foodGood = this.pickAvailableGood("food");
+        const foodGood = this.pickGoodByPreference("food", agent.personality, agent.socialization, agent.money);
         if (foodGood && agent.money >= foodGood.currentPrice) {
           agent.money -= foodGood.currentPrice;
           agent.needs.hunger = clamp(agent.needs.hunger + rand(30, 60));
@@ -1174,7 +1228,7 @@ class SimulationEngine {
       } else if (criticalNeed === "comfort") {
         agent.needs.comfort = clamp(agent.needs.comfort + rand(20, 40));
         agent.currentAction = "rest";
-        const serviceGood = this.pickAvailableGood("service");
+        const serviceGood = this.pickGoodByPreference("service", agent.personality, agent.socialization, agent.money * 0.5);
         if (serviceGood && agent.money >= serviceGood.currentPrice * 0.5) {
           agent.money -= serviceGood.currentPrice * 0.5;
           serviceGood.demand = clamp(serviceGood.demand + 0.5, 0, 200);
@@ -1215,7 +1269,7 @@ class SimulationEngine {
           agent.currentAction = "study";
         }
       } else if (criticalNeed === "entertainment") {
-        const parkGood = this.pickAvailableGood("park");
+        const parkGood = this.pickGoodByPreference("park", agent.personality, agent.socialization, agent.money);
         if (parkGood && agent.money >= parkGood.currentPrice) {
           agent.money -= parkGood.currentPrice;
           agent.needs.entertainment = clamp(agent.needs.entertainment + rand(25, 45));
@@ -1661,6 +1715,54 @@ class SimulationEngine {
     });
     if (relevant.length === 0) return null;
     return pick(relevant);
+  }
+
+  /**
+   * Pick a good using the consumer preference matrix (spec v1.6).
+   * Falls back to pickAvailableGood when no matrix entry exists for this type.
+   *
+   * Rules (from spec):
+   *   85% probability → buy from preferred price/quality tier
+   *   15% probability → buy from random available tier
+   *   If preferred tier is unaffordable → buy cheapest affordable
+   */
+  private pickGoodByPreference(
+    type: "food" | "service" | "park",
+    personality: string,
+    socialization: number,
+    budget: number,
+  ): GoodState | null {
+    const peers = Array.from(this.goods.values()).filter(g => {
+      const biz = g.businessId ? this.businesses.get(g.businessId) : null;
+      return biz && biz.type === type && g.supply > 0;
+    });
+    if (peers.length === 0) return null;
+
+    const matrixRow = CONSUMER_MATRIX[type];
+    if (!matrixRow) return pick(peers.filter(g => g.currentPrice <= budget)) ?? pick(peers);
+
+    const pIdx = getPersonalityIndex(personality, socialization);
+    const [prefPrice, prefQuality] = matrixRow[pIdx];
+
+    const preferred = peers.filter(g => {
+      const [pl, ql] = classifyGood(g, peers);
+      return pl === prefPrice && ql === prefQuality;
+    });
+
+    const affordablePreferred = preferred.filter(g => g.currentPrice <= budget);
+    const affordableAll = peers.filter(g => g.currentPrice <= budget);
+
+    if (affordablePreferred.length > 0 && Math.random() < 0.85) {
+      return pick(affordablePreferred);
+    }
+
+    // 15% random tier or preferred unaffordable → random from affordable
+    if (affordableAll.length > 0) {
+      return pick(affordableAll);
+    }
+
+    // Can't afford anything → cheapest available regardless of budget
+    return peers.sort((a, b) => a.currentPrice - b.currentPrice)[0] ?? null;
   }
 
   private pickSocialPartner(agentId: number, allIds: number[]): number | null {

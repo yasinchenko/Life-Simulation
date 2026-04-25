@@ -6,8 +6,54 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, ShoppingBasket, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// ── Consumer preference matrix (spec v1.6) ────────────────────────────────────
+// Index: 0=Санг.Инт 1=Санг.Экстр 2=Хол.Инт 3=Хол.Экстр
+//        4=Флег.Инт 5=Флег.Экстр 6=Мел.Инт 7=Мел.Экстр
+type PriceTier = "Низкая" | "Средняя" | "Высокая";
+type QualityTier = "Низкое" | "Среднее" | "Высокое";
+type TierPair = [PriceTier, QualityTier];
+
+const CONSUMER_MATRIX: Record<string, TierPair[]> = {
+  food: [
+    ["Средняя", "Среднее"], ["Высокая", "Высокое"], ["Высокая", "Высокое"], ["Средняя", "Высокое"],
+    ["Низкая",  "Среднее"], ["Средняя", "Среднее"], ["Высокая", "Высокое"], ["Высокая", "Среднее"],
+  ],
+  park: [
+    ["Низкая",  "Среднее"], ["Высокая", "Среднее"], ["Низкая",  "Высокое"], ["Высокая", "Высокое"],
+    ["Низкая",  "Низкое"],  ["Средняя", "Среднее"], ["Низкая",  "Среднее"], ["Средняя", "Высокое"],
+  ],
+  service: [
+    ["Средняя", "Высокое"], ["Высокая", "Высокое"], ["Средняя", "Среднее"], ["Высокая", "Высокое"],
+    ["Средняя", "Среднее"], ["Низкая",  "Среднее"], ["Средняя", "Среднее"], ["Высокая", "Высокое"],
+  ],
+};
+
+function getPersonalityIndex(personality: string, socialization: number): number {
+  const base: Record<string, number> = { "сангвиник": 0, "холерик": 2, "флегматик": 4, "меланхолик": 6 };
+  return (base[personality] ?? 0) + (socialization >= 50 ? 1 : 0);
+}
+
+const TEMPERAMENT_COLORS: Record<string, string> = {
+  "сангвиник":  "bg-[hsl(43,90%,50%)]/15  text-[hsl(43,90%,50%)]  border-[hsl(43,90%,50%)]/30",
+  "холерик":    "bg-[hsl(0,80%,55%)]/15   text-[hsl(0,80%,55%)]   border-[hsl(0,80%,55%)]/30",
+  "флегматик":  "bg-[hsl(173,80%,40%)]/15 text-[hsl(173,80%,40%)] border-[hsl(173,80%,40%)]/30",
+  "меланхолик": "bg-[hsl(220,70%,55%)]/15 text-[hsl(220,70%,55%)] border-[hsl(220,70%,55%)]/30",
+};
+
+const PRICE_COLORS: Record<PriceTier, string> = {
+  "Низкая":  "text-[hsl(120,60%,45%)]",
+  "Средняя": "text-[hsl(43,100%,50%)]",
+  "Высокая": "text-[hsl(0,80%,55%)]",
+};
+
+const QUALITY_COLORS: Record<QualityTier, string> = {
+  "Низкое":  "text-muted-foreground",
+  "Среднее": "text-[hsl(43,100%,50%)]",
+  "Высокое": "text-[hsl(173,80%,40%)]",
+};
 
 const ACTION_LABELS: Record<string, string> = {
   eat: "Ест",
@@ -100,7 +146,15 @@ export default function AgentDetailPage() {
             </div>
             <div>
               <h1 className="text-sm font-semibold text-foreground">{agent.name}</h1>
-              <p className="text-xs text-muted-foreground">{agent.gender === "male" ? "Мужчина" : "Женщина"} · {agent.age} лет · {agent.personality}</p>
+              <p className="text-xs text-muted-foreground">{agent.gender === "male" ? "Мужчина" : "Женщина"} · {agent.age} лет</p>
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className={cn("px-1.5 py-0.5 text-[10px] font-medium rounded border capitalize", TEMPERAMENT_COLORS[agent.personality] ?? "bg-muted/50 text-muted-foreground border-border")}>
+                  {agent.personality}
+                </span>
+                <span className="text-[10px] text-muted-foreground border border-border rounded px-1.5 py-0.5">
+                  {agent.socialization >= 50 ? "Экстраверт" : "Интроверт"} ({agent.socialization.toFixed(0)})
+                </span>
+              </div>
             </div>
           </div>
           <span className={cn("px-2 py-1 text-[10px] font-medium rounded border", ACTION_COLORS[agent.currentAction] ?? ACTION_COLORS.idle)}>
@@ -147,6 +201,44 @@ export default function AgentDetailPage() {
           <NeedsBar label="Вера" value={agent.needs.faith} icon={Star} color="hsl(35,90%,55%)" />
         )}
       </div>
+
+      {/* ── Consumer preference matrix ──────────────────────────────────────── */}
+      {(() => {
+        const pIdx = getPersonalityIndex(agent.personality, agent.socialization);
+        const rows: Array<{ label: string; key: string }> = [
+          { label: "Еда и напитки", key: "food" },
+          { label: "Бытовые услуги", key: "service" },
+          { label: "Досуг и развлечения", key: "park" },
+        ];
+        return (
+          <div className="bg-card border border-card-border rounded p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <ShoppingBasket className="w-3.5 h-3.5 text-muted-foreground" />
+              <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Потребительский профиль</h2>
+            </div>
+            <div className="space-y-2">
+              {rows.map(({ label, key }) => {
+                const tier = CONSUMER_MATRIX[key]?.[pIdx];
+                if (!tier) return null;
+                const [price, quality] = tier;
+                return (
+                  <div key={key} className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={cn("font-medium", PRICE_COLORS[price])}>Цена: {price}</span>
+                      <span className="text-muted-foreground/40">·</span>
+                      <span className={cn("font-medium", QUALITY_COLORS[quality])}>Качество: {quality}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground/60 pt-1">
+              85% вероятность покупки в предпочтительной категории · 15% — случайная
+            </p>
+          </div>
+        );
+      })()}
 
       <div className="bg-card border border-card-border rounded p-4 space-y-3">
         <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Карьера</h2>
