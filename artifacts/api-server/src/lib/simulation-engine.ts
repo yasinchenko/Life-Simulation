@@ -1502,12 +1502,7 @@ class SimulationEngine {
             const biz = this.businesses.get(bizId);
             if (biz) biz.balance += hospitalGood.currentPrice;
           }
-          // Государственное со-финансирование медицины: фиксированный грант за каждый визит
-          const hospGovGrant = 25;
-          const hospBiz = hospitalGood.businessId ? this.businesses.get(hospitalGood.businessId) : null;
-          if (hospBiz) hospBiz.balance += hospGovGrant;
-          runningBudget -= hospGovGrant;
-          publicServiceSpend += hospGovGrant;
+          // Больницы получают государственное финансирование через ежедневную субсидию (см. isNewDay блок).
           gdp += hospitalGood.currentPrice;
           dbgMoneyOut += hospitalGood.currentPrice;
           dbgSuccessful++;
@@ -1595,13 +1590,9 @@ class SimulationEngine {
         }
         agent.currentAction = "socialize";
       } else if (criticalNeed === "education") {
-        // Schools are publicly funded — free for all agents, paid by government budget
+        // Schools are publicly funded — free for agents. Budget paid via daily flat subsidy (see isNewDay block).
         const schoolGood = this.pickAvailableGood("school");
         if (schoolGood) {
-          // Фиксированный тариф обслуживания вместо рыночной цены.
-          // Рыночная цена (currentPrice) используется только для расчёта качества,
-          // но государство платит школе только базовый тариф на содержание.
-          const maintenanceCost = 45; // raised 18→45: must cover 3 teacher salaries (baseSalary=50 × 3 × ~30% utilisation)
           // Интеллект усиливает усвоение знаний: intel=50 → ×1.0, intel=90 → ×1.4
           const intelFactor = 0.5 + (agent.intelligence ?? 50) / 100;
           // Agent uses service for free
@@ -1612,14 +1603,8 @@ class SimulationEngine {
           agent.intelligence = Math.min(100, (agent.intelligence ?? 50) + rand(0.1, 0.3));
           schoolGood.demand = clamp(schoolGood.demand + 1, 0, 200);
           schoolGood.supply = clamp(schoolGood.supply - 1, 0, 200);
-          // Накопление качества
-          schoolGood.quality = Math.min(100, schoolGood.quality + maintenanceCost / 1000);
-          // Government pays the school a fixed maintenance fee
-          const biz = schoolGood.businessId ? this.businesses.get(schoolGood.businessId) : null;
-          if (biz) biz.balance += maintenanceCost;
-          runningBudget -= maintenanceCost;
-          publicServiceSpend += maintenanceCost;
-          gdp += maintenanceCost;
+          // Качество растёт при высокой посещаемости
+          schoolGood.quality = Math.min(100, schoolGood.quality + 0.05);
           dbgSuccessful++;
         } else {
           // No school available — self-study at home (intelligence still helps)
@@ -1628,12 +1613,9 @@ class SimulationEngine {
           agent.currentAction = "study";
         }
       } else if (criticalNeed === "entertainment") {
-        // Parks are publicly funded — free for all agents, paid by government budget
-        // Consumer matrix still applies for quality/tier preference
+        // Parks are publicly funded — free for agents. Budget paid via daily flat subsidy (see isNewDay block).
         const parkGood = this.pickGoodByPreference("park", agent.personality, agent.socialization, Infinity);
         if (parkGood) {
-          // Фиксированный тариф обслуживания парка вместо рыночной цены
-          const maintenanceCost = 30; // raised 14→30: covers 2 park worker salaries
           // Agent uses park for free
           agent.needs.entertainment = clamp(agent.needs.entertainment + rand(25, 45));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
@@ -1641,14 +1623,8 @@ class SimulationEngine {
           agent.currentAction = "relax";
           parkGood.demand = clamp(parkGood.demand + 1, 0, 200);
           parkGood.supply = clamp(parkGood.supply - 1, 0, 200);
-          // Накопление качества
-          parkGood.quality = Math.min(100, parkGood.quality + maintenanceCost / 1000);
-          // Government pays the park a fixed maintenance fee
-          const biz = parkGood.businessId ? this.businesses.get(parkGood.businessId) : null;
-          if (biz) biz.balance += maintenanceCost;
-          runningBudget -= maintenanceCost;
-          publicServiceSpend += maintenanceCost;
-          gdp += maintenanceCost;
+          // Качество растёт при высокой посещаемости
+          parkGood.quality = Math.min(100, parkGood.quality + 0.05);
           dbgSuccessful++;
         } else {
           // No park available — leisure at home
@@ -1669,11 +1645,7 @@ class SimulationEngine {
           templeGood.quality = Math.min(100, templeGood.quality + templeGood.currentPrice / 1000);
           const biz = templeGood.businessId ? this.businesses.get(templeGood.businessId) : null;
           if (biz) biz.balance += templeGood.currentPrice;
-          // Государственный культурный грант: поддержка религиозных институтов
-          const templeGovGrant = 35; // raised 15→35: covers 2 temple worker salaries
-          if (biz) biz.balance += templeGovGrant;
-          runningBudget -= templeGovGrant;
-          publicServiceSpend += templeGovGrant;
+          // Храмы получают государственную субсидию через ежедневный платёж (см. isNewDay блок).
           gdp += templeGood.currentPrice;
           dbgMoneyOut += templeGood.currentPrice;
           dbgSuccessful++;
@@ -1840,8 +1812,9 @@ class SimulationEngine {
       if (agent.recentActions.length > 10) agent.recentActions.shift();
     }
 
-    // Budget is already tracked via runningBudget throughout the tick
-    this.state.governmentBudget = runningBudget;
+    // Budget floor: governmentBudget should never go below 0 after all per-tick agent payments
+    this.state.governmentBudget = Math.max(0, runningBudget);
+    runningBudget = this.state.governmentBudget; // sync so isNewDay block starts from clamped value
     this.state.totalTaxCollected += taxRevenue;
     this.state.totalSubsidiesPaid += subsidiesPaid;
     this.state.totalPensionPaid += pensionPaid;
@@ -1897,8 +1870,39 @@ class SimulationEngine {
       }
       runningBudget += corpTax;
       taxRevenue += corpTax;
-      this.state.governmentBudget = runningBudget;
       this.state.totalTaxCollected += corpTax;
+
+      // ── Daily flat subsidy for all public services ────────────────────────
+      // All public services (schools, parks, hospitals, temples) are funded
+      // once per day proportional to staffing. Per-visit government payments
+      // were removed to prevent budget drain (125+ agent visits/tick × large
+      // amounts = unsustainable). Instead, government pays fixed daily wage
+      // coverage: numEmployees × baseSalary × multiplier.
+      //   school/park:  1.2× (no patient revenue, fully public-funded)
+      //   hospital:     0.6× (half subsidy — hospitals also earn patient fees)
+      //   temple:       0.8× (partial subsidy — temples also earn visitor fees)
+      // Guard: stops payments when government budget is insufficient.
+      const PUBLIC_SUBSIDY_MULTIPLIER: Record<string, number> = {
+        school:   1.2,
+        park:     1.2,
+        hospital: 0.6,
+        temple:   0.8,
+      };
+      let dailyPublicSubsidy = 0;
+      for (const biz of this.businesses.values()) {
+        const multiplier = PUBLIC_SUBSIDY_MULTIPLIER[biz.type];
+        if (multiplier == null) continue;
+        const minSubsidy = baseSalary * 0.3; // floor for unstaffed buildings
+        const staffSubsidy = biz.employeeCount * baseSalary * multiplier;
+        const subsidy = Math.max(staffSubsidy, minSubsidy);
+        if (runningBudget >= subsidy) {
+          biz.balance += subsidy;
+          runningBudget -= subsidy;
+          dailyPublicSubsidy += subsidy;
+        }
+      }
+      this.state.totalPublicServicesPaid += dailyPublicSubsidy;
+      this.state.governmentBudget = runningBudget;
 
       // ── Government business grants ─────────────────────────────────────────
       // When unemployment exceeds threshold and budget allows, fund new businesses

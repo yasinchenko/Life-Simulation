@@ -193,7 +193,7 @@ export default function GovernmentPage() {
                 <span className="text-[hsl(348,83%,47%)] tabular-nums">-{gov.totalPensionPaid.toFixed(0)}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
-                <span className="text-muted-foreground">Финансирование школ и парков</span>
+                <span className="text-muted-foreground">Финансирование публичных служб</span>
                 <span className="text-[hsl(348,83%,47%)] tabular-nums">-{gov.totalPublicServicesPaid.toFixed(0)}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-border/50">
