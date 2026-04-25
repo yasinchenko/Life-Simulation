@@ -149,7 +149,9 @@ export const GetAgentResponse = zod.object({
   "sleep": zod.number(),
   "education": zod.number().optional(),
   "entertainment": zod.number().optional(),
-  "faith": zod.number().optional()
+  "faith": zod.number().optional(),
+  "housingSafety": zod.number().optional(),
+  "financialSafety": zod.number().optional()
 }),
   "relations": zod.array(zod.object({
   "otherId": zod.number(),

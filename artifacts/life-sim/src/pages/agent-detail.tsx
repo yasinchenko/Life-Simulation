@@ -6,7 +6,7 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, TrendingUp, DoorOpen, Clock, Award, Home, Banknote, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -136,6 +136,12 @@ export default function AgentDetailPage() {
         )}
         {agent.needs.entertainment != null && (
           <NeedsBar label="Развлечения" value={agent.needs.entertainment} icon={Gamepad2} color="hsl(120,60%,45%)" />
+        )}
+        {agent.needs.financialSafety != null && (
+          <NeedsBar label="Фин. безопасность" value={agent.needs.financialSafety} icon={Banknote} color="hsl(142,60%,45%)" />
+        )}
+        {agent.needs.housingSafety != null && (
+          <NeedsBar label="Жилищная безопасность" value={agent.needs.housingSafety} icon={Home} color="hsl(195,80%,45%)" />
         )}
         {agent.needs.faith != null && (
           <NeedsBar label="Вера" value={agent.needs.faith} icon={Star} color="hsl(35,90%,55%)" />
