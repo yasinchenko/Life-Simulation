@@ -70,6 +70,7 @@ interface BusinessState extends Business {
   employeeCount: number;
   firedThisTick: number;
   hiredThisTick: number;
+  ticksUnprofitable: number; // how many consecutive ticks with negative balance
 }
 
 interface GoodState extends Good {}
@@ -549,7 +550,7 @@ class SimulationEngine {
       }
     }
     for (const b of rows) {
-      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, firedThisTick: 0, hiredThisTick: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
   }
 
@@ -585,7 +586,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const goodInserts = savedBiz.map(b => ({
@@ -641,7 +642,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const goodInserts = savedBiz.map(b => {
@@ -690,7 +691,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const goodInserts = savedBiz.map(b => {
@@ -789,7 +790,7 @@ class SimulationEngine {
 
     const savedBusinesses = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBusinesses) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
     }
 
     const foodBusinessIds = savedBusinesses.filter(b => b.type === "food").map(b => b.id);
@@ -1908,7 +1909,7 @@ class SimulationEngine {
     const prevGoodPrices = new Map(Array.from(this.goods.entries()).map(([id, g]) => [id, g.currentPrice]));
     const chainResult = this.processProductionChains();
     this.updateGoodPrices();
-    this.updateBusinesses();
+    await this.updateBusinesses();
 
     // Corporate tax: once per game day, 5% of profitable business balance
     if (isNewDay) {
@@ -2388,15 +2389,87 @@ class SimulationEngine {
         const prodLevel = ownerBiz?.productivityLevel ?? 0;
         const empCount = ownerBiz?.employeeCount ?? 0;
         const prodBonus = Math.floor(prodLevel * 0.1 * empCount);
-        good.supply = clamp(good.supply + rand(1, 4) + prodBonus, 0, 200);
+
+        // ── Supply decay for oversupplied goods ───────────────────────────
+        // Ratio-based: when supply massively exceeds demand, goods spoil/go unsold.
+        // This applies regardless of the absolute demand level.
+        const supplyRatio = good.supply / Math.max(good.demand, 1);
+        if (supplyRatio > 5 || (good.demand < 5 && good.supply > 30)) {
+          // Severe oversupply: heavy spoilage
+          good.supply = clamp(good.supply - rand(8, 16), 0, 200);
+        } else if (supplyRatio > 2.5) {
+          // Moderate oversupply: trim excess
+          good.supply = clamp(good.supply - rand(3, 7), 0, 200);
+        } else if (supplyRatio > 1.5) {
+          // Slight oversupply: hold steady, minimal growth
+          good.supply = clamp(good.supply - rand(0, 2), 0, 200);
+        } else {
+          // Healthy demand: allow production growth
+          good.supply = clamp(good.supply + rand(1, 4) + prodBonus, 0, 200);
+        }
         good.demand = clamp(good.demand - rand(1, 3), 0, 200);
       }
     }
   }
 
-  private updateBusinesses(): void {
+  private async updateBusinesses(): Promise<void> {
+    // ── Bankruptcy thresholds ──────────────────────────────────────────────
+    // Only commercial non-essential businesses can go bankrupt
+    const BANKRUPT_TYPES = new Set(["food", "service"]);
+    const BANKRUPT_TICKS = 25;          // must be unprofitable for this many consecutive ticks
+    const BANKRUPT_SUPPLY_RATIO = 3.0;  // AND its good must be severely oversupplied (supply > demand×3)
+    const BANKRUPT_BALANCE_CAP = -300;  // AND balance must be below this threshold
+
+    const toClose: number[] = [];
+
     for (const biz of this.businesses.values()) {
-      if (biz.balance < 0) biz.balance = Math.max(biz.balance + biz.productionRate * 5, 0);
+      if (biz.balance < 0) {
+        biz.ticksUnprofitable++;
+      } else {
+        biz.ticksUnprofitable = 0;
+      }
+
+      // Check bankruptcy conditions for commercial businesses only
+      if (!BANKRUPT_TYPES.has(biz.type)) continue;
+      if (biz.ticksUnprofitable < BANKRUPT_TICKS) continue;
+      if (biz.balance > BANKRUPT_BALANCE_CAP) continue;
+
+      // Check if this business's good is severely oversupplied (no real buyers for its stock)
+      const bizGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id);
+      if (bizGood) {
+        const ratio = bizGood.supply / Math.max(bizGood.demand, 1);
+        if (ratio < BANKRUPT_SUPPLY_RATIO) continue; // demand still outpaces oversupply — keep open
+      }
+
+      toClose.push(biz.id);
+    }
+
+    // Close bankrupt businesses
+    for (const bizId of toClose) {
+      const biz = this.businesses.get(bizId);
+      if (!biz) continue;
+
+      logger.info({ bizId, bizName: biz.name, balance: Math.round(biz.balance), ticksUnprofitable: biz.ticksUnprofitable }, "Business going bankrupt — closing");
+
+      // Fire all employees
+      for (const agent of this.agents.values()) {
+        if (agent.employerId === bizId) {
+          agent.employerId = null;
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: bizId, businessName: biz.name }];
+        }
+      }
+
+      // Remove goods owned by this business
+      for (const [goodId, good] of this.goods.entries()) {
+        if (good.businessId === bizId) {
+          this.goods.delete(goodId);
+          await db.delete(goodsTable).where(eq(goodsTable.id, goodId)).catch(() => {});
+        }
+      }
+
+      // Remove business from map and DB
+      this.businesses.delete(bizId);
+      await db.delete(businessesTable).where(eq(businessesTable.id, bizId)).catch(() => {});
     }
   }
 
@@ -2419,30 +2492,85 @@ class SimulationEngine {
       return { grantsIssued: 0, totalSpent: 0 };
     }
 
-    // Pick candidates: unemployed, not jailed, low money, sorted by highest ambition
+    // Pick candidates: unemployed, not jailed, sorted by lowest money then highest ambition
+    // No strict money cap — any unemployed agent can receive a grant to open a business
     const candidates = unemployed
-      .filter(a => a.money < 300 && a.jailedUntilTick == null)
-      .sort((a, b) => (b.ambition ?? 50) - (a.ambition ?? 50))
+      .filter(a => a.jailedUntilTick == null && a.money < 8000)
+      .sort((a, b) => {
+        if (a.money !== b.money) return a.money - b.money; // poorest first
+        return (b.ambition ?? 50) - (a.ambition ?? 50);
+      })
       .slice(0, MAX_GRANTS_PER_DAY);
 
     if (candidates.length === 0) return { grantsIssued: 0, totalSpent: 0 };
+
+    // ── Market demand analysis ─────────────────────────────────────────────
+    // Aggregate demand and supply per good name across all consumer goods
+    // This tells us WHICH specific niche has the most unmet demand
+    const nicheDemand = new Map<string, { totalDemand: number; totalSupply: number; bizType: "food" | "service"; basePrice: number }>();
+    for (const good of this.goods.values()) {
+      const biz = good.businessId != null ? this.businesses.get(good.businessId) : null;
+      if (!biz || (biz.type !== "food" && biz.type !== "service")) continue;
+      const key = good.name;
+      const prev = nicheDemand.get(key);
+      if (prev) {
+        prev.totalDemand += good.demand;
+        prev.totalSupply += good.supply;
+      } else {
+        nicheDemand.set(key, {
+          totalDemand: good.demand,
+          totalSupply: good.supply,
+          bizType: biz.type as "food" | "service",
+          basePrice: good.basePrice,
+        });
+      }
+    }
+
+    // Score each niche: high demand + low supply = hot niche worth entering
+    // Also add known good names that have zero existing businesses (totally unserved)
+    for (const gn of [...FOOD_GOOD_NAMES, ...SERVICE_GOOD_NAMES]) {
+      if (!nicheDemand.has(gn)) {
+        const isFood = FOOD_GOOD_NAMES.includes(gn);
+        nicheDemand.set(gn, {
+          totalDemand: 50, // assume decent latent demand for unserved niches
+          totalSupply: 1,  // minimal supply
+          bizType: isFood ? "food" : "service",
+          basePrice: isFood ? this.config.baseFoodPrice : this.config.baseFoodPrice * 1.5,
+        });
+      }
+    }
+
+    // Sort niches by demand/supply ratio descending (highest unmet demand first)
+    // Include all niches — even oversupplied ones are eligible when unemployment is high
+    const sortedNiches = Array.from(nicheDemand.entries())
+      .map(([name, data]) => ({
+        name,
+        ...data,
+        ratio: data.totalDemand / Math.max(data.totalSupply, 1),
+      }))
+      .sort((a, b) => b.ratio - a.ratio);
 
     let grantsIssued = 0;
     let totalSpent = 0;
     const { baseFoodPrice } = this.config;
 
-    const foodCount = Array.from(this.businesses.values()).filter(b => b.type === "food").length;
-    const serviceCount = Array.from(this.businesses.values()).filter(b => b.type === "service").length;
-
     for (const agent of candidates) {
       if (this.state.governmentBudget < GRANT_AMOUNT) break;
 
-      const isFood = grantsIssued % 2 === 0;
-      const bizType = isFood ? "food" : "service";
-      const bizNum = isFood ? (foodCount + grantsIssued + 1) : (serviceCount + grantsIssued + 1);
-      const bizName = isFood
-        ? `${pick(FOOD_BUSINESS_NAMES)} №${bizNum}`
-        : `${pick(SERVICE_BUSINESS_NAMES)} №${bizNum}`;
+      // Pick the hottest niche (rotate through top niches to avoid saturation)
+      const nicheIndex = grantsIssued % Math.min(sortedNiches.length, 5);
+      const targetNiche = sortedNiches[nicheIndex] ?? {
+        name: pick(FOOD_GOOD_NAMES),
+        bizType: "food" as const,
+        basePrice: baseFoodPrice,
+        ratio: 1,
+      };
+
+      const bizType = targetNiche.bizType;
+      const bizCount = Array.from(this.businesses.values()).filter(b => b.type === bizType).length;
+      const bizName = bizType === "food"
+        ? `${pick(FOOD_BUSINESS_NAMES)} №${bizCount + 1}`
+        : `${pick(SERVICE_BUSINESS_NAMES)} №${bizCount + 1}`;
 
       const [newBiz] = await db.insert(businessesTable).values({
         name: bizName,
@@ -2458,18 +2586,20 @@ class SimulationEngine {
         employeeCount: 1,
         firedThisTick: 0,
         hiredThisTick: 1,
+        ticksUnprofitable: 0,
       });
 
-      const goodName = isFood ? pick(FOOD_GOOD_NAMES) : pick(SERVICE_GOOD_NAMES);
-      const goodPrice = isFood ? baseFoodPrice : baseFoodPrice * 1.5;
+      // Use demand signal as starting demand for the new good
+      const initialDemand = clamp(Math.round(targetNiche.ratio * 20), 20, 80);
+      const goodPrice = targetNiche.basePrice;
       const [newGood] = await db.insert(goodsTable).values({
-        name: goodName,
+        name: targetNiche.name,
         businessId: newBiz.id,
         basePrice: goodPrice,
         currentPrice: goodPrice * (1 + this.config.priceMarkup),
         quality: rand(40, 70),
-        demand: rand(15, 40),
-        supply: rand(20, 50),
+        demand: initialDemand,
+        supply: rand(10, 25), // start with low supply to meet real demand
       }).returning();
       this.goods.set(newGood.id, { ...newGood });
 
@@ -2485,7 +2615,11 @@ class SimulationEngine {
       grantsIssued++;
       totalSpent += GRANT_AMOUNT;
 
-      logger.debug({ agentId: agent.id, bizName, bizType, unemploymentRate: Math.round(unemploymentRate * 100) }, "Government grant issued");
+      logger.info({
+        agentId: agent.id, bizName, bizType, goodName: targetNiche.name,
+        niqueRatio: Math.round(targetNiche.ratio * 100) / 100,
+        unemploymentRate: Math.round(unemploymentRate * 100),
+      }, "Government grant issued (demand-aware)");
     }
 
     return { grantsIssued, totalSpent };
