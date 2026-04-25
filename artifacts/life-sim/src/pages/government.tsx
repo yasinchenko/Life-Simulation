@@ -1,14 +1,23 @@
 import {
   useGetGovernment,
   getGetGovernmentQueryKey,
+  useListBusinesses,
+  getListBusinessesQueryKey,
 } from "@workspace/api-client-react";
-import { Landmark, TrendingDown, TrendingUp, Percent, ShieldCheck } from "lucide-react";
+import { Landmark, TrendingDown, TrendingUp, Percent, ShieldCheck, BookOpen, TreePine, Star } from "lucide-react";
 import StatCard from "@/components/stat-card";
 
 export default function GovernmentPage() {
   const { data: gov, isLoading } = useGetGovernment({
     query: { queryKey: getGetGovernmentQueryKey(), refetchInterval: 15000 },
   });
+  const { data: businesses } = useListBusinesses({
+    query: { queryKey: getListBusinessesQueryKey(), refetchInterval: 30000 },
+  });
+
+  const schools = businesses?.filter(b => b.type === "school") ?? [];
+  const parks = businesses?.filter(b => b.type === "park") ?? [];
+  const temples = businesses?.filter(b => b.type === "temple") ?? [];
 
   return (
     <div className="p-6 space-y-6 max-w-2xl">
@@ -80,6 +89,36 @@ export default function GovernmentPage() {
                 <p className="text-muted-foreground">Пенсионная ставка</p>
                 <p className="font-medium text-foreground text-base">{(gov.pensionRate * 100).toFixed(0)}%</p>
                 <p className="text-[10px] text-muted-foreground">от базовой зарплаты выплачивается пенсионерам за тик</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-card border border-card-border rounded p-4 space-y-3">
+            <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Публичные службы</h2>
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div className="flex flex-col items-center gap-1.5 p-3 bg-[hsl(270,70%,60%)]/5 border border-[hsl(270,70%,60%)]/20 rounded">
+                <BookOpen className="w-4 h-4 text-[hsl(270,70%,60%)]" />
+                <span className="text-muted-foreground">Школы</span>
+                <span className="text-lg font-bold text-[hsl(270,70%,60%)]">{schools.length}</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {schools.reduce((s, b) => s + b.employeeCount, 0)} сотр.
+                </span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5 p-3 bg-[hsl(120,60%,45%)]/5 border border-[hsl(120,60%,45%)]/20 rounded">
+                <TreePine className="w-4 h-4 text-[hsl(120,60%,45%)]" />
+                <span className="text-muted-foreground">Парки</span>
+                <span className="text-lg font-bold text-[hsl(120,60%,45%)]">{parks.length}</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {parks.reduce((s, b) => s + b.employeeCount, 0)} сотр.
+                </span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5 p-3 bg-[hsl(35,90%,55%)]/5 border border-[hsl(35,90%,55%)]/20 rounded">
+                <Star className="w-4 h-4 text-[hsl(35,90%,55%)]" />
+                <span className="text-muted-foreground">Храмы</span>
+                <span className="text-lg font-bold text-[hsl(35,90%,55%)]">{temples.length}</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {temples.reduce((s, b) => s + b.employeeCount, 0)} сотр.
+                </span>
               </div>
             </div>
           </div>

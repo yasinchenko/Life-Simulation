@@ -6,7 +6,7 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, BookOpen, Gamepad2, Star, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -17,6 +17,9 @@ const ACTION_LABELS: Record<string, string> = {
   socialize: "Общается",
   work: "Работает",
   idle: "Простаивает",
+  study: "Учится",
+  relax: "Развлекается",
+  pray: "Молится",
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -27,6 +30,9 @@ const ACTION_COLORS: Record<string, string> = {
   sleep: "bg-[hsl(220,70%,55%)]/10 text-[hsl(220,70%,55%)] border-[hsl(220,70%,55%)]/30",
   heal: "bg-[hsl(0,80%,55%)]/10 text-[hsl(0,80%,55%)] border-[hsl(0,80%,55%)]/30",
   idle: "bg-muted/50 text-muted-foreground border-border",
+  study: "bg-[hsl(270,70%,60%)]/10 text-[hsl(270,70%,60%)] border-[hsl(270,70%,60%)]/30",
+  relax: "bg-[hsl(120,60%,45%)]/10 text-[hsl(120,60%,45%)] border-[hsl(120,60%,45%)]/30",
+  pray: "bg-[hsl(35,90%,55%)]/10 text-[hsl(35,90%,55%)] border-[hsl(35,90%,55%)]/30",
 };
 
 function NeedsBar({ label, value, icon: Icon, color }: { label: string; value: number; icon: LucideIcon; color: string }) {
@@ -125,6 +131,15 @@ export default function AgentDetailPage() {
         <NeedsBar label="Голод" value={agent.needs.hunger} icon={Coffee} color="hsl(43,100%,50%)" />
         <NeedsBar label="Комфорт" value={agent.needs.comfort} icon={Heart} color="hsl(173,80%,40%)" />
         <NeedsBar label="Общение" value={agent.needs.social} icon={Users} color="hsl(280,80%,60%)" />
+        {agent.needs.education != null && (
+          <NeedsBar label="Образование" value={agent.needs.education} icon={BookOpen} color="hsl(270,70%,60%)" />
+        )}
+        {agent.needs.entertainment != null && (
+          <NeedsBar label="Развлечения" value={agent.needs.entertainment} icon={Gamepad2} color="hsl(120,60%,45%)" />
+        )}
+        {agent.needs.faith != null && (
+          <NeedsBar label="Вера" value={agent.needs.faith} icon={Star} color="hsl(35,90%,55%)" />
+        )}
       </div>
 
       <div className="bg-card border border-card-border rounded p-4">

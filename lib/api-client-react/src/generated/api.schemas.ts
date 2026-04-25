@@ -43,6 +43,9 @@ export interface AgentNeeds {
   social: number;
   health: number;
   sleep: number;
+  education?: number;
+  entertainment?: number;
+  faith?: number;
 }
 
 export interface AgentRelation {

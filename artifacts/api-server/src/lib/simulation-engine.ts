@@ -1233,6 +1233,9 @@ class SimulationEngine {
       else if (act === "socialize") dbgActSocialize++;
       else if (act === "sleep") dbgActSleep++;
       else if (act === "heal") dbgActHeal++;
+      else if (act === "study") dbgActStudy++;
+      else if (act === "relax") dbgActRelax++;
+      else if (act === "pray") dbgActPray++;
       else dbgActIdle++;
 
       // Track recent actions (keep last 10)
@@ -1336,7 +1339,7 @@ class SimulationEngine {
         agents: {
           processed: agentIds.length - dbgSkipped,
           skipped: dbgSkipped,
-          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, sleep: dbgActSleep, heal: dbgActHeal, socialize: dbgActSocialize, idle: dbgActIdle },
+          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, sleep: dbgActSleep, heal: dbgActHeal, socialize: dbgActSocialize, idle: dbgActIdle, study: dbgActStudy, relax: dbgActRelax, pray: dbgActPray },
           moneyIn: Math.round(dbgMoneyIn),
           moneyOut: Math.round(dbgMoneyOut),
         },
@@ -1618,6 +1621,9 @@ class SimulationEngine {
         bizType === "hospital" ? 3 :
         bizType === "farm" ? 0.5 :
         bizType === "workshop" ? 0.8 :
+        bizType === "school" ? 1.5 :
+        bizType === "park" ? 1.2 :
+        bizType === "temple" ? 0.4 :
         2; // service
       const base = baseFoodPrice * priceMultiplier;
       // Quality premium: ±10% based on quality deviation from 50
@@ -1626,15 +1632,17 @@ class SimulationEngine {
 
       // Supply dynamics differ by business tier
       if (bizType === "farm") {
-        // Farms grow supply naturally (crops)
         good.supply = clamp(good.supply + rand(3, 8), 0, 200);
         good.demand = clamp(good.demand - rand(0, 1), 0, 200);
       } else if (bizType === "workshop") {
-        // Workshops produce at moderate pace
         good.supply = clamp(good.supply + rand(2, 6), 0, 200);
         good.demand = clamp(good.demand - rand(0, 1), 0, 200);
+      } else if (bizType === "school" || bizType === "park" || bizType === "temple") {
+        // Public services replenish supply daily — high turnover
+        good.supply = clamp(good.supply + rand(2, 5), 0, 200);
+        good.demand = clamp(good.demand - rand(0, 1), 0, 200);
       } else {
-        // Consumer goods: chain provides main supply boost; natural slow growth
+        // Consumer goods: natural slow growth
         good.supply = clamp(good.supply + rand(0, 2), 0, 200);
         good.demand = clamp(good.demand - rand(0, 2), 0, 200);
       }
@@ -1667,7 +1675,7 @@ class SimulationEngine {
           })
           .where(eq(agentsTable.id, agent.id));
         await db.update(needsTable)
-          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social, health: agent.needs.health, sleep: agent.needs.sleep })
+          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social, health: agent.needs.health, sleep: agent.needs.sleep, education: agent.needs.education, entertainment: agent.needs.entertainment, faith: agent.needs.faith })
           .where(eq(needsTable.agentId, agent.id));
       }
     }
@@ -1937,6 +1945,9 @@ class SimulationEngine {
         social: Math.round(agent.needs.social * 10) / 10,
         health: Math.round(agent.needs.health * 10) / 10,
         sleep: Math.round(agent.needs.sleep * 10) / 10,
+        education: Math.round(agent.needs.education * 10) / 10,
+        entertainment: Math.round(agent.needs.entertainment * 10) / 10,
+        faith: Math.round(agent.needs.faith * 10) / 10,
       },
     };
   }

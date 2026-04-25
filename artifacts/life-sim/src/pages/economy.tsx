@@ -28,6 +28,9 @@ const TYPE_LABELS: Record<string, string> = {
   hospital: "Больница",
   farm: "Ферма",
   workshop: "Мастерская",
+  school: "Школа",
+  park: "Парк",
+  temple: "Храм",
 };
 const TYPE_COLORS: Record<string, string> = {
   food: "text-[hsl(43,100%,50%)]",
@@ -35,6 +38,9 @@ const TYPE_COLORS: Record<string, string> = {
   hospital: "text-[hsl(0,80%,60%)]",
   farm: "text-[hsl(84,70%,45%)]",
   workshop: "text-[hsl(200,80%,50%)]",
+  school: "text-[hsl(270,70%,60%)]",
+  park: "text-[hsl(120,60%,45%)]",
+  temple: "text-[hsl(35,90%,55%)]",
 };
 
 const BIZ_GROUP_OPTIONS: { key: BizGroupBy; label: string }[] = [

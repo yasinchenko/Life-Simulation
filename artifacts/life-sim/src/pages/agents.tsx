@@ -27,6 +27,9 @@ const ACTION_LABELS: Record<string, string> = {
   socialize: "Общается",
   work: "Работает",
   idle: "Простаивает",
+  study: "Учится",
+  relax: "Развлекается",
+  pray: "Молится",
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -37,6 +40,9 @@ const ACTION_COLORS: Record<string, string> = {
   socialize: "text-[hsl(280,80%,60%)]",
   work: "text-[hsl(210,100%,50%)]",
   idle: "text-muted-foreground",
+  study: "text-[hsl(270,70%,60%)]",
+  relax: "text-[hsl(120,60%,45%)]",
+  pray: "text-[hsl(35,90%,55%)]",
 };
 
 const ACTION_BG: Record<string, string> = {
@@ -47,6 +53,9 @@ const ACTION_BG: Record<string, string> = {
   socialize: "bg-[hsl(280,80%,60%)]",
   work: "bg-[hsl(210,100%,50%)]",
   idle: "bg-muted-foreground/50",
+  study: "bg-[hsl(270,70%,60%)]",
+  relax: "bg-[hsl(120,60%,45%)]",
+  pray: "bg-[hsl(35,90%,55%)]",
 };
 
 const GROUP_BY_OPTIONS: { key: GroupBy; label: string }[] = [
