@@ -221,6 +221,7 @@ export interface TickDebugReport {
     taxRevenue: number;
     pensionsPaid: number;
     subsidiesPaid: number;
+    publicServiceSpend: number;
     pensionRecipients: number;
     subsidyRecipients: number;
   };
@@ -992,6 +993,7 @@ class SimulationEngine {
     let taxRevenue = 0;
     let subsidiesPaid = 0;
     let pensionPaid = 0;
+    let publicServiceSpend = 0;
     let runningBudget = this.state.governmentBudget;
 
     const dbgBudgetBefore = runningBudget;
@@ -1250,41 +1252,50 @@ class SimulationEngine {
         }
         agent.currentAction = "socialize";
       } else if (criticalNeed === "education") {
+        // Schools are publicly funded — free for all agents, paid by government budget
         const schoolGood = this.pickAvailableGood("school");
-        if (schoolGood && agent.money >= schoolGood.currentPrice) {
-          agent.money -= schoolGood.currentPrice;
+        if (schoolGood) {
+          const cost = schoolGood.currentPrice;
+          // Agent uses service for free
           agent.needs.education = clamp(agent.needs.education + rand(25, 45));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(3, 8));
           agent.currentAction = "study";
           schoolGood.demand = clamp(schoolGood.demand + 1, 0, 200);
           schoolGood.supply = clamp(schoolGood.supply - 1, 0, 200);
+          // Government pays the school
           const biz = schoolGood.businessId ? this.businesses.get(schoolGood.businessId) : null;
-          if (biz) biz.balance += schoolGood.currentPrice;
-          gdp += schoolGood.currentPrice;
-          dbgMoneyOut += schoolGood.currentPrice;
+          if (biz) biz.balance += cost;
+          runningBudget -= cost;
+          publicServiceSpend += cost;
+          gdp += cost;
           dbgSuccessful++;
         } else {
-          // Can't afford or no school — self-study at home
+          // No school available — self-study at home
           agent.needs.education = clamp(agent.needs.education + rand(8, 15));
           agent.currentAction = "study";
         }
       } else if (criticalNeed === "entertainment") {
-        const parkGood = this.pickGoodByPreference("park", agent.personality, agent.socialization, agent.money);
-        if (parkGood && agent.money >= parkGood.currentPrice) {
-          agent.money -= parkGood.currentPrice;
+        // Parks are publicly funded — free for all agents, paid by government budget
+        // Consumer matrix still applies for quality/tier preference
+        const parkGood = this.pickGoodByPreference("park", agent.personality, agent.socialization, Infinity);
+        if (parkGood) {
+          const cost = parkGood.currentPrice;
+          // Agent uses park for free
           agent.needs.entertainment = clamp(agent.needs.entertainment + rand(25, 45));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
           agent.mood = clamp(agent.mood + rand(1, 4));
           agent.currentAction = "relax";
           parkGood.demand = clamp(parkGood.demand + 1, 0, 200);
           parkGood.supply = clamp(parkGood.supply - 1, 0, 200);
+          // Government pays the park
           const biz = parkGood.businessId ? this.businesses.get(parkGood.businessId) : null;
-          if (biz) biz.balance += parkGood.currentPrice;
-          gdp += parkGood.currentPrice;
-          dbgMoneyOut += parkGood.currentPrice;
+          if (biz) biz.balance += cost;
+          runningBudget -= cost;
+          publicServiceSpend += cost;
+          gdp += cost;
           dbgSuccessful++;
         } else {
-          // No park / no money — free leisure at home
+          // No park available — leisure at home
           agent.needs.entertainment = clamp(agent.needs.entertainment + rand(10, 18));
           agent.currentAction = "relax";
         }
@@ -1549,6 +1560,7 @@ class SimulationEngine {
           taxRevenue: Math.round(taxRevenue),
           pensionsPaid: Math.round(pensionPaid),
           subsidiesPaid: Math.round(subsidiesPaid),
+          publicServiceSpend: Math.round(publicServiceSpend),
           pensionRecipients: dbgPensionRecipients,
           subsidyRecipients: dbgSubsidyRecipients,
         },
