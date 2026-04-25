@@ -113,7 +113,10 @@ export const ListAgentsResponse = zod.object({
   "personality": zod.string(),
   "socialization": zod.number(),
   "currentAction": zod.string(),
-  "employerId": zod.number().nullish()
+  "employerId": zod.number().nullish(),
+  "isRetired": zod.boolean().optional(),
+  "careerLevel": zod.number().optional(),
+  "jobTitle": zod.string().optional(),
 })),
   "total": zod.number(),
   "page": zod.number(),

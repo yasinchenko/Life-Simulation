@@ -626,7 +626,18 @@ function AgentRow({ agent }: { agent: AgentItem }) {
         {ACTION_LABELS[agent.currentAction] ?? agent.currentAction}
       </td>
       <td className="px-3 py-2 text-muted-foreground">
-        {agent.personality}
+        {agent.isRetired ? (
+          <span className="text-chart-5/80">Пенсионер</span>
+        ) : agent.employerId ? (
+          <span className="text-primary/80">
+            {agent.jobTitle ?? "Рабочий"}
+            {agent.careerLevel && agent.careerLevel > 1 && (
+              <span className="ml-1 text-[10px] text-chart-2/70">G{agent.careerLevel}</span>
+            )}
+          </span>
+        ) : (
+          <span className="text-chart-5/50">Безработный</span>
+        )}
       </td>
     </tr>
   );

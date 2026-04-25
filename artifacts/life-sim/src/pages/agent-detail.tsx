@@ -296,12 +296,12 @@ export default function AgentDetailPage() {
 
         {/* Grade + ambition row */}
         {(() => {
-          const GRADE_LABELS: Record<number, string> = { 1: "Рабочий", 2: "Менеджер", 3: "Руководитель", 4: "Директор", 5: "Топ-менеджер" };
+          const GRADE_LABELS: Record<number, string> = { 1: "Рабочий", 2: "Менеджер", 3: "Бригадир", 4: "Директор", 5: "Владелец" };
           const GRADE_COLORS: Record<number, string> = { 1: "hsl(173,60%,35%)", 2: "hsl(173,70%,38%)", 3: "hsl(43,90%,45%)", 4: "hsl(43,100%,50%)", 5: "hsl(0,80%,55%)" };
           const level = agent.careerLevel ?? 1;
           const target = agent.targetCareerLevel ?? 1;
           const ambition = agent.ambition ?? 50;
-          const SALARY_MULT = [1.0, 1.4, 1.9, 2.5, 3.2];
+          const SALARY_MULT = [1.0, 2.0, 3.5, 6.0, 10.0];
           const salaryMult = SALARY_MULT[Math.min(4, level - 1)] ?? 1.0;
           return (
             <div className="space-y-2">

@@ -74,19 +74,20 @@ interface BusinessState extends Business {
   ticksUnprofitable: number; // how many consecutive ticks with negative balance
 }
 
-// Max hiring capacity per business type.
-// With daily salary (baseSalary=50/day), businesses can afford several employees:
-//   food/service revenue ≈ 3000-4000/day; wages = N × 50/day → profitable up to N≈60
-//   Keep N moderate to spread jobs across businesses without over-crowding
+// Max hiring capacity per business type — derived from the design spec table
+// (grades Рабочий/Менеджер/Бригадир/Директор/Владелец per business type).
+// Each value = sum of all role caps in the corresponding table column.
+// Column mapping: food≈col1(64), service≈col5(39), hospital≈col3(27),
+//   park≈col4(63), temple≈col2(22), farm≈col6(95), school≈col7(31), workshop≈col8(30)
 const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = {
-  food:     5,
-  service:  6,
-  farm:     3,
-  workshop: 3,
-  hospital: 5,
-  school:   3,
-  park:     2,
-  temple:   2,
+  food:     64,
+  service:  39,
+  hospital: 27,
+  park:     63,
+  temple:   22,
+  farm:     95,
+  school:   31,
+  workshop: 30,
 };
 
 interface GoodState extends Good {}
@@ -115,16 +116,22 @@ const FEMALE_NAMES = [
 ];
 const PERSONALITIES = ["сангвиник", "холерик", "флегматик", "меланхолик"];
 
-// Career grade salary multipliers: grade 1..5 → ×1.0 / ×1.4 / ×1.9 / ×2.5 / ×3.2
-const CAREER_SALARY_MULT = [1.0, 1.4, 1.9, 2.5, 3.2] as const;
+// Career grade salary multipliers: grade 1..5 (Рабочий → Владелец)
+// Steep ladder so high-grade specialists earn meaningfully more.
+//   Grade 1 (Рабочий):   ×1.0  → baseSalary × 1.0  = 50 /day
+//   Grade 2 (Менеджер):  ×2.0  → baseSalary × 2.0  = 100/day
+//   Grade 3 (Бригадир):  ×3.5  → baseSalary × 3.5  = 175/day
+//   Grade 4 (Директор):  ×6.0  → baseSalary × 6.0  = 300/day
+//   Grade 5 (Владелец):  ×10.0 → baseSalary × 10.0 = 500/day
+const CAREER_SALARY_MULT = [1.0, 2.0, 3.5, 6.0, 10.0] as const;
 
 // Grade name labels used in UI / job history
 const GRADE_LABELS: Record<number, string> = {
   1: "Рабочий",
   2: "Менеджер",
-  3: "Руководитель",
+  3: "Бригадир",
   4: "Директор",
-  5: "Топ-менеджер",
+  5: "Владелец",
 };
 
 /** Target career grade derived from ambition (20–100) */
@@ -1878,15 +1885,16 @@ class SimulationEngine {
       // were removed to prevent budget drain (125+ agent visits/tick × large
       // amounts = unsustainable). Instead, government pays fixed daily wage
       // coverage: numEmployees × baseSalary × multiplier.
-      //   school/park:  1.2× (no patient revenue, fully public-funded)
-      //   hospital:     0.6× (half subsidy — hospitals also earn patient fees)
-      //   temple:       0.8× (partial subsidy — temples also earn visitor fees)
       // Guard: stops payments when government budget is insufficient.
+      // Subsidy covers employee wages at average grade 2 (Менеджер, ×2.0 base).
+      // school/park: fully public-funded → 2.2× base covers grade-2 wages + 10% buffer.
+      // hospital: partial (patients also pay) → 1.0× covers grade-1 wages.
+      // temple: partial (visitors also pay) → 1.0× covers grade-1 wages.
       const PUBLIC_SUBSIDY_MULTIPLIER: Record<string, number> = {
-        school:   1.2,
-        park:     1.2,
-        hospital: 0.6,
-        temple:   0.8,
+        school:   2.2,
+        park:     2.2,
+        hospital: 1.0,
+        temple:   1.0,
       };
       let dailyPublicSubsidy = 0;
       for (const biz of this.businesses.values()) {
@@ -2896,6 +2904,8 @@ class SimulationEngine {
         currentAction: a.currentAction,
         employerId: a.employerId,
         isRetired: a.isRetired,
+        careerLevel: a.careerLevel,
+        jobTitle: GRADE_LABELS[a.careerLevel] ?? "Рабочий",
       })),
       total,
       page,

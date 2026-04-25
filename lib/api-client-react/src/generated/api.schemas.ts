@@ -35,6 +35,9 @@ export interface Agent {
   currentAction: string;
   /** @nullable */
   employerId?: number | null;
+  isRetired?: boolean;
+  careerLevel?: number;
+  jobTitle?: string;
 }
 
 export interface AgentNeeds {
