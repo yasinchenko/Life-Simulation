@@ -11,7 +11,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 
 import {
   Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Settings,
-  Baby, Building2, Package, Briefcase,
+  Baby, Building2, Package, Briefcase, Moon, ShieldPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import StatCard from "@/components/stat-card";
@@ -134,7 +134,29 @@ export default function Dashboard() {
         <div className="bg-card border border-card-border rounded p-4 space-y-4">
           <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Сводка</h2>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <SummaryMetric
+              icon={ShieldPlus}
+              label="Здоровье"
+              sublabel="среднее по жителям"
+              value={summary.avgHealth?.toFixed(1) ?? "—"}
+              delta={summary.avgHealth - 50}
+              deltaLabel={summary.avgHealth >= 70 ? "хорошее" : summary.avgHealth >= 40 ? "среднее" : "критическое"}
+              positive={summary.avgHealth >= 50}
+              bar
+              barFill={summary.avgHealth / 100}
+            />
+            <SummaryMetric
+              icon={Moon}
+              label="Сон"
+              sublabel="среднее по жителям"
+              value={summary.avgSleep?.toFixed(1) ?? "—"}
+              delta={summary.avgSleep - 50}
+              deltaLabel={summary.avgSleep >= 70 ? "выспавшиеся" : summary.avgSleep >= 40 ? "усталые" : "истощённые"}
+              positive={summary.avgSleep >= 50}
+              bar
+              barFill={summary.avgSleep / 100}
+            />
             <SummaryMetric
               icon={Baby}
               label="Рождаемость"

@@ -6,12 +6,13 @@ import {
   type AgentRelation,
   type JobHistoryEntry,
 } from "@workspace/api-client-react";
-import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, type LucideIcon } from "lucide-react";
+import { ArrowLeft, User, Heart, Coffee, Users, Briefcase, LogIn, LogOut, Sunset, Moon, ShieldPlus, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ACTION_LABELS: Record<string, string> = {
   eat: "Ест",
   rest: "Отдыхает",
+  sleep: "Спит",
   socialize: "Общается",
   work: "Работает",
   idle: "Простаивает",
@@ -22,6 +23,7 @@ const ACTION_COLORS: Record<string, string> = {
   rest: "bg-[hsl(173,80%,40%)]/10 text-[hsl(173,80%,40%)] border-[hsl(173,80%,40%)]/30",
   socialize: "bg-[hsl(280,80%,60%)]/10 text-[hsl(280,80%,60%)] border-[hsl(280,80%,60%)]/30",
   work: "bg-[hsl(210,100%,50%)]/10 text-[hsl(210,100%,50%)] border-[hsl(210,100%,50%)]/30",
+  sleep: "bg-[hsl(220,70%,55%)]/10 text-[hsl(220,70%,55%)] border-[hsl(220,70%,55%)]/30",
   idle: "bg-muted/50 text-muted-foreground border-border",
 };
 
@@ -116,6 +118,8 @@ export default function AgentDetailPage() {
 
       <div className="bg-card border border-card-border rounded p-4 space-y-4">
         <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Потребности</h2>
+        <NeedsBar label="Здоровье" value={agent.needs.health} icon={ShieldPlus} color="hsl(0,80%,55%)" />
+        <NeedsBar label="Сон" value={agent.needs.sleep} icon={Moon} color="hsl(220,70%,55%)" />
         <NeedsBar label="Голод" value={agent.needs.hunger} icon={Coffee} color="hsl(43,100%,50%)" />
         <NeedsBar label="Комфорт" value={agent.needs.comfort} icon={Heart} color="hsl(173,80%,40%)" />
         <NeedsBar label="Общение" value={agent.needs.social} icon={Users} color="hsl(280,80%,60%)" />

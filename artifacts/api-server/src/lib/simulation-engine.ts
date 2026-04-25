@@ -56,7 +56,7 @@ interface JobHistoryEntry {
 }
 
 interface AgentState extends Agent {
-  needs: { hunger: number; comfort: number; social: number };
+  needs: { hunger: number; comfort: number; social: number; health: number; sleep: number };
   needsId: number;
   recentActions: string[];
   jobHistory: JobHistoryEntry[];
@@ -293,16 +293,16 @@ class SimulationEngine {
   private async loadAgents(): Promise<void> {
     const agentRows = await db.select().from(agentsTable).limit(5000);
     const needsRows = await db.select().from(needsTable);
-    const needsMap = new Map<number, { hunger: number; comfort: number; social: number; id: number }>();
+    const needsMap = new Map<number, { hunger: number; comfort: number; social: number; health: number; sleep: number; id: number }>();
     for (const n of needsRows) {
-      needsMap.set(n.agentId, { hunger: n.hunger, comfort: n.comfort, social: n.social, id: n.id });
+      needsMap.set(n.agentId, { hunger: n.hunger, comfort: n.comfort, social: n.social, health: n.health ?? 80, sleep: n.sleep ?? 80, id: n.id });
     }
     this.agents.clear();
     for (const agent of agentRows) {
-      const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, id: 0 };
+      const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, health: 80, sleep: 80, id: 0 };
       let jobHistory: JobHistoryEntry[] = [];
       try { jobHistory = JSON.parse(agent.jobHistory ?? "[]"); } catch { jobHistory = []; }
-      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social }, needsId: needs.id, recentActions: [], jobHistory });
+      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health, sleep: needs.sleep }, needsId: needs.id, recentActions: [], jobHistory });
     }
   }
 
@@ -480,6 +480,8 @@ class SimulationEngine {
         hunger: rand(50, 95),
         comfort: rand(50, 95),
         social: rand(50, 95),
+        health: rand(60, 90),
+        sleep: rand(50, 90),
       }));
 
       const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
@@ -491,7 +493,7 @@ class SimulationEngine {
         if (!needs) continue;
         this.agents.set(agent.id, {
           ...agent,
-          needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social },
+          needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80 },
           needsId: needs.id,
           recentActions: [],
           jobHistory: agent.employerId ? [{ tick: 0, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }] : [],
@@ -642,7 +644,7 @@ class SimulationEngine {
 
     const dbgBudgetBefore = runningBudget;
     const dbgBizBalanceBefore = Array.from(this.businesses.values()).reduce((s, b) => s + b.balance, 0);
-    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0;
+    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0, dbgActSleep = 0;
     let dbgMoneyIn = 0, dbgMoneyOut = 0, dbgWagesPaid = 0;
     let dbgSuccessful = 0, dbgFailedNoGoods = 0, dbgFailedNoMoney = 0;
     let dbgPensionRecipients = 0, dbgSubsidyRecipients = 0;
@@ -686,6 +688,13 @@ class SimulationEngine {
         }
       }
 
+      // Death from health reaching zero (any agent, any tick)
+      if (agent.needs.health <= 0) {
+        dailyDeaths.push(agentId);
+        dbgSkipped++;
+        continue;
+      }
+
       // Pension: only if government budget allows
       if (agent.isRetired) {
         const pensionAmount = baseSalary * pensionRate;
@@ -724,11 +733,31 @@ class SimulationEngine {
       agent.needs.hunger = clamp(agent.needs.hunger - needDecayRate * rand(0.5, 1.5));
       agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
       agent.needs.social = clamp(agent.needs.social - needDecayRate * rand(0.4, 1.2));
+      agent.needs.sleep = clamp(agent.needs.sleep - 2.5 * rand(0.8, 1.2));
+
+      // Health dynamics
+      let healthDelta = 0;
+      if (agent.needs.hunger < 30) healthDelta -= 0.8;  // starvation hurts
+      if (agent.needs.sleep < 20) healthDelta -= 1.2;   // exhaustion hurts
+      if (agent.needs.hunger > 50 && agent.needs.sleep > 50) healthDelta += 0.2; // natural recovery
+      healthDelta -= 0.03; // slow aging wear
+      agent.needs.health = clamp(agent.needs.health + healthDelta);
 
       const criticalNeed = this.getCriticalNeed(agent.needs);
       let income = 0;
 
-      if (criticalNeed === "hunger") {
+      if (criticalNeed === "sleep") {
+        // Agent sleeps: recover sleep, boost health a little
+        agent.needs.sleep = clamp(agent.needs.sleep + rand(22, 35));
+        agent.needs.health = clamp(agent.needs.health + 0.3);
+        agent.currentAction = "sleep";
+      } else if (criticalNeed === "health") {
+        // Agent rests to recover health, also restores some sleep and comfort
+        agent.needs.sleep = clamp(agent.needs.sleep + rand(10, 20));
+        agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 15));
+        agent.needs.health = clamp(agent.needs.health + 0.5);
+        agent.currentAction = "rest";
+      } else if (criticalNeed === "hunger") {
         const foodGood = this.pickAvailableGood("food");
         if (foodGood && agent.money >= foodGood.currentPrice) {
           agent.money -= foodGood.currentPrice;
@@ -811,7 +840,9 @@ class SimulationEngine {
         agent.mood +
           (agent.needs.hunger - 50) * 0.01 +
           (agent.needs.comfort - 50) * 0.01 +
-          (agent.needs.social - 50) * 0.005
+          (agent.needs.social - 50) * 0.005 +
+          (agent.needs.health - 50) * 0.008 +
+          (agent.needs.sleep - 50) * 0.005
       );
 
       // Subsidy: only if government budget allows
@@ -828,6 +859,7 @@ class SimulationEngine {
       else if (act === "eat") dbgActEat++;
       else if (act === "rest") dbgActRest++;
       else if (act === "socialize") dbgActSocialize++;
+      else if (act === "sleep") dbgActSleep++;
       else dbgActIdle++;
 
       // Track recent actions (keep last 10)
@@ -914,7 +946,7 @@ class SimulationEngine {
         agents: {
           processed: agentIds.length - dbgSkipped,
           skipped: dbgSkipped,
-          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, socialize: dbgActSocialize, idle: dbgActIdle },
+          actions: { work: dbgActWork, eat: dbgActEat, rest: dbgActRest, sleep: dbgActSleep, socialize: dbgActSocialize, idle: dbgActIdle },
           moneyIn: Math.round(dbgMoneyIn),
           moneyOut: Math.round(dbgMoneyOut),
         },
@@ -1019,6 +1051,8 @@ class SimulationEngine {
       hunger: rand(60, 90),
       comfort: rand(60, 90),
       social: rand(60, 90),
+      health: rand(65, 90),
+      sleep: rand(55, 90),
     }));
     const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
     const needsMap = new Map<number, typeof savedNeeds[0]>();
@@ -1029,7 +1063,7 @@ class SimulationEngine {
       if (!needs) continue;
       this.agents.set(agent.id, {
         ...agent,
-        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social },
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80 },
         needsId: needs.id,
         recentActions: [],
         jobHistory: agent.employerId
@@ -1043,7 +1077,10 @@ class SimulationEngine {
     }
   }
 
-  private getCriticalNeed(needs: { hunger: number; comfort: number; social: number }): string {
+  private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number }): string {
+    // Priority order: health < 20 → must rest; sleep < 25 → sleep; hunger < 30; comfort < 30; social < 30
+    if (needs.health < 20) return "health";
+    if (needs.sleep < 25) return "sleep";
     const threshold = 30;
     if (needs.hunger < threshold && needs.hunger <= needs.comfort && needs.hunger <= needs.social) return "hunger";
     if (needs.comfort < threshold && needs.comfort <= needs.social) return "comfort";
@@ -1117,7 +1154,7 @@ class SimulationEngine {
           })
           .where(eq(agentsTable.id, agent.id));
         await db.update(needsTable)
-          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social })
+          .set({ hunger: agent.needs.hunger, comfort: agent.needs.comfort, social: agent.needs.social, health: agent.needs.health, sleep: agent.needs.sleep })
           .where(eq(needsTable.agentId, agent.id));
       }
     }
@@ -1385,6 +1422,8 @@ class SimulationEngine {
         hunger: Math.round(agent.needs.hunger * 10) / 10,
         comfort: Math.round(agent.needs.comfort * 10) / 10,
         social: Math.round(agent.needs.social * 10) / 10,
+        health: Math.round(agent.needs.health * 10) / 10,
+        sleep: Math.round(agent.needs.sleep * 10) / 10,
       },
     };
   }
@@ -1474,6 +1513,8 @@ class SimulationEngine {
         unemployedAgents: 0,
         avgMood: 0,
         avgWealth: 0,
+        avgHealth: 0,
+        avgSleep: 0,
         gdp: 0,
         richestAgent: null,
         happiestAgent: null,
@@ -1490,6 +1531,8 @@ class SimulationEngine {
     const employed = agents.filter(a => a.employerId != null);
     const avgMood = agents.reduce((s, a) => s + a.mood, 0) / agents.length;
     const avgWealth = agents.reduce((s, a) => s + a.money, 0) / agents.length;
+    const avgHealth = agents.reduce((s, a) => s + a.needs.health, 0) / agents.length;
+    const avgSleep = agents.reduce((s, a) => s + a.needs.sleep, 0) / agents.length;
     const richest = agents.reduce((max, a) => a.money > max.money ? a : max, agents[0]);
     const happiest = agents.reduce((max, a) => a.mood > max.mood ? a : max, agents[0]);
     const goodsSorted = [...goodsArr].sort((a, b) => b.demand - a.demand);
@@ -1501,6 +1544,8 @@ class SimulationEngine {
       unemployedAgents: agents.length - employed.length,
       avgMood: Math.round(avgMood * 10) / 10,
       avgWealth: Math.round(avgWealth * 100) / 100,
+      avgHealth: Math.round(avgHealth * 10) / 10,
+      avgSleep: Math.round(avgSleep * 10) / 10,
       gdp: Math.round(marketBalance),
       richestAgent: richest?.name ?? null,
       happiestAgent: happiest?.name ?? null,

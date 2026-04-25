@@ -10,7 +10,7 @@ interface TickDebugReport {
   agents: {
     processed: number;
     skipped: number;
-    actions: { work: number; eat: number; rest: number; socialize: number; idle: number };
+    actions: { work: number; eat: number; rest: number; sleep: number; socialize: number; idle: number };
     moneyIn: number;
     moneyOut: number;
   };
@@ -152,6 +152,7 @@ export default function DebugPanel({ running }: { running: boolean }) {
                 <Row label="работа" value={d.agents.actions.work} />
                 <Row label="еда" value={d.agents.actions.eat} />
                 <Row label="отдых" value={d.agents.actions.rest} />
+                <Row label="сон" value={d.agents.actions.sleep ?? 0} />
                 <Row label="общение" value={d.agents.actions.socialize} />
                 <Row label="простой" value={d.agents.actions.idle} />
                 <Row label="денег получено" value={`+${fmt(d.agents.moneyIn)}`} accent="teal" />

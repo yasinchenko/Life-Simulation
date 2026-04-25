@@ -26,6 +26,8 @@ export const needsTable = pgTable("needs", {
   hunger: real("hunger").notNull().default(80),
   comfort: real("comfort").notNull().default(80),
   social: real("social").notNull().default(80),
+  health: real("health").notNull().default(80),
+  sleep: real("sleep").notNull().default(80),
 });
 
 export const relationsTable = pgTable("relations", {

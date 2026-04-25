@@ -10,4 +10,6 @@ export interface AgentNeeds {
   hunger: number;
   comfort: number;
   social: number;
+  health: number;
+  sleep: number;
 }

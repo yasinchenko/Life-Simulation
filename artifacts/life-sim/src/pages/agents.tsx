@@ -22,6 +22,7 @@ type ViewMode = "table" | "analysis";
 const ACTION_LABELS: Record<string, string> = {
   eat: "Ест",
   rest: "Отдыхает",
+  sleep: "Спит",
   socialize: "Общается",
   work: "Работает",
   idle: "Простаивает",
@@ -30,6 +31,7 @@ const ACTION_LABELS: Record<string, string> = {
 const ACTION_COLORS: Record<string, string> = {
   eat: "text-[hsl(43,100%,50%)]",
   rest: "text-[hsl(173,80%,40%)]",
+  sleep: "text-[hsl(220,70%,60%)]",
   socialize: "text-[hsl(280,80%,60%)]",
   work: "text-[hsl(210,100%,50%)]",
   idle: "text-muted-foreground",
@@ -38,6 +40,7 @@ const ACTION_COLORS: Record<string, string> = {
 const ACTION_BG: Record<string, string> = {
   eat: "bg-[hsl(43,100%,50%)]",
   rest: "bg-[hsl(173,80%,40%)]",
+  sleep: "bg-[hsl(220,70%,60%)]",
   socialize: "bg-[hsl(280,80%,60%)]",
   work: "bg-[hsl(210,100%,50%)]",
   idle: "bg-muted-foreground/50",

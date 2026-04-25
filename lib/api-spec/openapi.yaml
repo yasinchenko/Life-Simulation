@@ -364,10 +364,16 @@ components:
           type: number
         social:
           type: number
+        health:
+          type: number
+        sleep:
+          type: number
       required:
         - hunger
         - comfort
         - social
+        - health
+        - sleep
 
     AgentRelation:
       type: object
@@ -668,6 +674,10 @@ components:
           type: number
         avgWealth:
           type: number
+        avgHealth:
+          type: number
+        avgSleep:
+          type: number
         richestAgent:
           type: string
         happiestAgent:
@@ -698,6 +708,8 @@ components:
         - unemployedAgents
         - avgMood
         - avgWealth
+        - avgHealth
+        - avgSleep
         - gdp
         - birthsLastTick
         - deathsLastTick

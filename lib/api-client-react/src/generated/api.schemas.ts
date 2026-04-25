@@ -41,6 +41,8 @@ export interface AgentNeeds {
   hunger: number;
   comfort: number;
   social: number;
+  health: number;
+  sleep: number;
 }
 
 export interface AgentRelation {
@@ -170,6 +172,8 @@ export interface StatsSummary {
   unemployedAgents: number;
   avgMood: number;
   avgWealth: number;
+  avgHealth: number;
+  avgSleep: number;
   richestAgent?: string;
   happiestAgent?: string;
   mostPopularGood?: string;

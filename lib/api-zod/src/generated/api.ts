@@ -144,7 +144,9 @@ export const GetAgentResponse = zod.object({
   "needs": zod.object({
   "hunger": zod.number(),
   "comfort": zod.number(),
-  "social": zod.number()
+  "social": zod.number(),
+  "health": zod.number(),
+  "sleep": zod.number()
 }),
   "relations": zod.array(zod.object({
   "otherId": zod.number(),
@@ -293,6 +295,8 @@ export const GetStatsSummaryResponse = zod.object({
   "unemployedAgents": zod.number(),
   "avgMood": zod.number(),
   "avgWealth": zod.number(),
+  "avgHealth": zod.number(),
+  "avgSleep": zod.number(),
   "richestAgent": zod.string().optional(),
   "happiestAgent": zod.string().optional(),
   "mostPopularGood": zod.string().optional(),

@@ -14,6 +14,8 @@ export interface StatsSummary {
   unemployedAgents: number;
   avgMood: number;
   avgWealth: number;
+  avgHealth: number;
+  avgSleep: number;
   richestAgent?: string;
   happiestAgent?: string;
   mostPopularGood?: string;
