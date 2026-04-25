@@ -85,6 +85,12 @@ export type AgentDetail = Agent & {
   totalJobs?: number;
   /** Number of promotions received */
   promotions?: number;
+  /** Current career grade 1-5 */
+  careerLevel?: number;
+  /** Ambition attribute 20-100 */
+  ambition?: number;
+  /** Target career grade derived from ambition */
+  targetCareerLevel?: number;
 };
 
 export interface AgentListResponse {

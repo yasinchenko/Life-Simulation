@@ -172,6 +172,9 @@ export const GetAgentResponse = zod.object({
   "jobTenure": zod.number().nullable().optional(),
   "totalJobs": zod.number().optional(),
   "promotions": zod.number().optional(),
+  "careerLevel": zod.number().optional(),
+  "ambition": zod.number().optional(),
+  "targetCareerLevel": zod.number().optional(),
 }))
 
 

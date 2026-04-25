@@ -17,6 +17,8 @@ export const agentsTable = pgTable("agents", {
   jobHistory: text("job_history").notNull().default("[]"),
   locationX: real("location_x").notNull().default(0),
   locationY: real("location_y").notNull().default(0),
+  careerLevel: integer("career_level").notNull().default(1),
+  ambition: real("ambition").notNull().default(50),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

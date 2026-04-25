@@ -62,6 +62,7 @@ interface AgentState extends Agent {
   recentActions: string[];
   jobHistory: JobHistoryEntry[];
   jobStartTick: number | null;
+  // careerLevel and ambition come from Agent (DB schema)
 }
 
 interface BusinessState extends Business {
@@ -95,6 +96,33 @@ const FEMALE_NAMES = [
   "Виктория", "Людмила", "Нина", "Алёна", "Марина", "Вера",
 ];
 const PERSONALITIES = ["сангвиник", "холерик", "флегматик", "меланхолик"];
+
+// Career grade salary multipliers: grade 1..5 → ×1.0 / ×1.4 / ×1.9 / ×2.5 / ×3.2
+const CAREER_SALARY_MULT = [1.0, 1.4, 1.9, 2.5, 3.2] as const;
+
+// Grade name labels used in UI / job history
+const GRADE_LABELS: Record<number, string> = {
+  1: "Рабочий",
+  2: "Менеджер",
+  3: "Руководитель",
+  4: "Директор",
+  5: "Топ-менеджер",
+};
+
+/** Target career grade derived from ambition (20–100) */
+function targetGrade(ambition: number): number {
+  if (ambition >= 80) return 5;
+  if (ambition >= 65) return 4;
+  if (ambition >= 50) return 3;
+  if (ambition >= 35) return 2;
+  return 1;
+}
+
+/** Salary for one tick of work considering career level */
+function calcSalary(baseSalary: number, careerLevel: number): number {
+  const mult = CAREER_SALARY_MULT[Math.min(4, Math.max(0, careerLevel - 1))] ?? 1.0;
+  return baseSalary * mult * rand(0.9, 1.1);
+}
 
 // Consumer preference matrix per spec v1.6 (Потребительская матрица)
 // Index: 0=Санг.Интр  1=Санг.Экстр  2=Хол.Интр  3=Хол.Экстр
@@ -856,6 +884,8 @@ class SimulationEngine {
         employerId,
         locationX: rand(0, 1000),
         locationY: rand(0, 1000),
+        careerLevel: 1,
+        ambition: randInt(20, 100),
       });
     }
 
@@ -1140,18 +1170,58 @@ class SimulationEngine {
         }
       }
 
-      // Promotion: employed agents with good tenure (100+ ticks) and decent mood get promoted (0.5% chance/tick)
-      if (!agent.isRetired && agent.employerId != null && agent.jobStartTick != null) {
-        const tenure = this.state.tick - agent.jobStartTick;
-        if (tenure >= 100 && agent.mood > 50 && Math.random() < 0.005) {
-          const biz = this.businesses.get(agent.employerId);
-          if (biz) {
-            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "promoted", businessId: agent.employerId, businessName: biz.name }];
-            // Promotion bonus
-            const bonus = rand(10, 30);
-            agent.money += bonus;
-            agent.mood = clamp(agent.mood + rand(3, 8));
+      // ── Career advancement (grades 1–5) ─────────────────────────────────
+      if (!agent.isRetired) {
+        const careerTarget = targetGrade(agent.ambition);
+        const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : 0;
+
+        if (agent.careerLevel < careerTarget && agent.employerId != null && tenure >= 48) {
+          // Ambition-driven promotion attempt at current employer (~4%×ambition per tick)
+          const promotionProb = (agent.ambition / 100) * 0.04;
+          if (Math.random() < promotionProb) {
+            agent.careerLevel = Math.min(5, agent.careerLevel + 1);
+            const biz = this.businesses.get(agent.employerId);
+            agent.jobHistory = [...agent.jobHistory, {
+              tick: this.state.tick, event: "promoted",
+              businessId: agent.employerId, businessName: biz?.name ?? null,
+            }];
+            agent.money += agent.careerLevel * rand(8, 15);
+            agent.mood = clamp(agent.mood + rand(5, 12));
+          } else if (availableBusinessIds.length > 1 && Math.random() < 0.035) {
+            // Career-driven job switch: seek better opportunity (spec: "Проверить вакансии")
+            const candidates = availableBusinessIds.filter(id => id !== agent.employerId);
+            if (candidates.length > 0) {
+              const newBizId = pick(candidates);
+              const newBiz = this.businesses.get(newBizId);
+              if (newBiz) {
+                const oldBiz = this.businesses.get(agent.employerId);
+                if (oldBiz) { oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1); oldBiz.firedThisTick++; }
+                agent.jobHistory = [...agent.jobHistory, {
+                  tick: this.state.tick, event: "quit",
+                  businessId: agent.employerId, businessName: oldBiz?.name ?? null, duration: tenure,
+                }];
+                agent.employerId = newBizId;
+                agent.jobStartTick = this.state.tick;
+                newBiz.employeeCount++;
+                newBiz.hiredThisTick++;
+                agent.jobHistory = [...agent.jobHistory, {
+                  tick: this.state.tick, event: "hired",
+                  businessId: newBizId, businessName: newBiz.name,
+                }];
+              }
+            }
           }
+        } else if (agent.careerLevel >= careerTarget && agent.employerId != null
+            && tenure >= 200 && agent.careerLevel < 5 && Math.random() < 0.002) {
+          // Exceptional promotion even when career goal is satisfied (top performers)
+          agent.careerLevel = Math.min(5, agent.careerLevel + 1);
+          const biz = this.businesses.get(agent.employerId);
+          agent.jobHistory = [...agent.jobHistory, {
+            tick: this.state.tick, event: "promoted",
+            businessId: agent.employerId, businessName: biz?.name ?? null,
+          }];
+          agent.money += agent.careerLevel * rand(8, 15);
+          agent.mood = clamp(agent.mood + rand(3, 8));
         }
       }
 
@@ -1259,7 +1329,7 @@ class SimulationEngine {
           else dbgFailedNoMoney++;
           if (agent.employerId) {
             agent.currentAction = "work";
-            const salary = baseSalary * rand(0.8, 1.2);
+            const salary = calcSalary(baseSalary, agent.careerLevel);
             const tax = salary * taxRate;
             income = salary - tax;
             agent.money += income;
@@ -1385,7 +1455,7 @@ class SimulationEngine {
         // Financial crisis: prioritise earning money
         if (agent.employerId) {
           // Work urgently for income
-          const salary = baseSalary * rand(0.8, 1.2);
+          const salary = calcSalary(baseSalary, agent.careerLevel);
           const tax = salary * taxRate;
           income = salary - tax;
           agent.money += income;
@@ -1417,7 +1487,7 @@ class SimulationEngine {
         // Housing crisis: urgently get a job (income = rent)
         if (agent.employerId) {
           // Already employed — work for stable income
-          const salary = baseSalary * rand(0.8, 1.2);
+          const salary = calcSalary(baseSalary, agent.careerLevel);
           const tax = salary * taxRate;
           income = salary - tax;
           agent.money += income;
@@ -1447,7 +1517,7 @@ class SimulationEngine {
         }
       } else {
         if (agent.employerId) {
-          const salary = baseSalary * rand(0.8, 1.2);
+          const salary = calcSalary(baseSalary, agent.careerLevel);
           const tax = salary * taxRate;
           income = salary - tax;
           agent.money += income;
@@ -1716,6 +1786,8 @@ class SimulationEngine {
         employerId,
         locationX: rand(0, 1000),
         locationY: rand(0, 1000),
+        careerLevel: 1,
+        ambition: randInt(20, 100),
       });
     }
 
@@ -2008,6 +2080,8 @@ class SimulationEngine {
             employerId: agent.employerId,
             isRetired: agent.isRetired,
             jobHistory: JSON.stringify(agent.jobHistory.slice(-50)),
+            careerLevel: agent.careerLevel,
+            ambition: agent.ambition,
           })
           .where(eq(agentsTable.id, agent.id));
         await db.update(needsTable)
@@ -2294,6 +2368,9 @@ class SimulationEngine {
       jobTenure: agent.employerId && agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : null,
       totalJobs: agent.jobHistory.filter(e => e.event === "hired").length,
       promotions: agent.jobHistory.filter(e => e.event === "promoted").length,
+      careerLevel: agent.careerLevel,
+      ambition: Math.round(agent.ambition),
+      targetCareerLevel: targetGrade(agent.ambition),
     };
   }
 

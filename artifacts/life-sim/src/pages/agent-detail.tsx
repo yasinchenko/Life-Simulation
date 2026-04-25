@@ -243,8 +243,44 @@ export default function AgentDetailPage() {
       <div className="bg-card border border-card-border rounded p-4 space-y-3">
         <h2 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Карьера</h2>
 
-        {/* Current status */}
-        <div className="flex items-start gap-3">
+        {/* Grade + ambition row */}
+        {(() => {
+          const GRADE_LABELS: Record<number, string> = { 1: "Рабочий", 2: "Менеджер", 3: "Руководитель", 4: "Директор", 5: "Топ-менеджер" };
+          const GRADE_COLORS: Record<number, string> = { 1: "hsl(173,60%,35%)", 2: "hsl(173,70%,38%)", 3: "hsl(43,90%,45%)", 4: "hsl(43,100%,50%)", 5: "hsl(0,80%,55%)" };
+          const level = agent.careerLevel ?? 1;
+          const target = agent.targetCareerLevel ?? 1;
+          const ambition = agent.ambition ?? 50;
+          const SALARY_MULT = [1.0, 1.4, 1.9, 2.5, 3.2];
+          const salaryMult = SALARY_MULT[Math.min(4, level - 1)] ?? 1.0;
+          return (
+            <div className="space-y-2">
+              {/* Grade progress */}
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5">
+                  <Award className="w-3.5 h-3.5" style={{ color: GRADE_COLORS[level] }} />
+                  <span className="font-semibold" style={{ color: GRADE_COLORS[level] }}>{GRADE_LABELS[level] ?? `Грейд ${level}`}</span>
+                  <span className="text-muted-foreground">· Грейд {level}</span>
+                </div>
+                <span className="text-muted-foreground text-[10px]">Цель: {GRADE_LABELS[target] ?? `Грейд ${target}`} ({target})</span>
+              </div>
+              {/* Grade bar */}
+              <div className="flex gap-0.5">
+                {[1,2,3,4,5].map(g => (
+                  <div key={g} className="flex-1 h-1.5 rounded-sm"
+                    style={{ background: g <= level ? GRADE_COLORS[g] : g <= target ? "hsl(173,30%,22%)" : "hsl(220,10%,20%)" }} />
+                ))}
+              </div>
+              {/* Salary multiplier + ambition */}
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>Зарплатный множитель: <span className="text-foreground font-medium">×{salaryMult.toFixed(1)}</span></span>
+                <span>Амбиции: <span className="text-[hsl(43,90%,50%)] font-medium">{ambition}</span>/100</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Current employment status */}
+        <div className="flex items-start gap-3 pt-1 border-t border-border/30">
           {agent.isRetired ? (
             <div className="flex items-center gap-2 text-xs">
               <Sunset className="w-4 h-4 text-[hsl(43,100%,50%)] shrink-0" />
