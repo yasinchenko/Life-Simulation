@@ -1673,21 +1673,25 @@ class SimulationEngine {
         }
       }
 
-      agent.mood = clamp(
-        agent.mood +
-          (agent.needs.hunger - 50) * 0.01 +
-          (agent.needs.comfort - 50) * 0.01 +
-          (agent.needs.social - 50) * 0.005 +
-          (agent.needs.health - 50) * 0.008 +
-          (agent.needs.sleep - 50) * 0.005 +
-          (agent.needs.education - 50) * 0.003 +
-          (agent.needs.entertainment - 50) * 0.004 +
-          (agent.needs.faith - 50) * 0.002 +
-          (agent.needs.financialSafety - 50) * 0.006 +
-          (agent.needs.housingSafety - 50) * 0.005 +
-          (agent.needs.physicalSafety - 50) * 0.007 +
-          (agent.needs.socialRating - 50) * 0.004
-      );
+      // Настроение конвергирует к "целевому" значению на основе взвешенного
+      // среднего потребностей (2% в тик ≈ 1.5 игровых дня до равновесия).
+      // Это предотвращает накопление настроения до 100 при удовлетворённых нуждах.
+      const moodTarget = clamp(
+        50 +
+          (agent.needs.hunger - 50) * 0.14 +
+          (agent.needs.comfort - 50) * 0.12 +
+          (agent.needs.social - 50) * 0.09 +
+          (agent.needs.health - 50) * 0.13 +
+          (agent.needs.sleep - 50) * 0.12 +
+          (agent.needs.education - 50) * 0.05 +
+          (agent.needs.entertainment - 50) * 0.07 +
+          (agent.needs.faith - 50) * 0.04 +
+          (agent.needs.financialSafety - 50) * 0.09 +
+          (agent.needs.housingSafety - 50) * 0.06 +
+          (agent.needs.physicalSafety - 50) * 0.08 +
+          (agent.needs.socialRating - 50) * 0.07
+      ); // коэффициенты сумма = 1.06 → небольшое масштабирование вверх при хороших нуждах
+      agent.mood = clamp(agent.mood + (moodTarget - agent.mood) * 0.025);
 
       // Subsidy: once per game day only, capped at subsidyAmount per day
       if (isNewDay && agent.money <= 10 && runningBudget >= subsidyAmount) {
@@ -2338,8 +2342,12 @@ class SimulationEngine {
     if (agents.length === 0) return { avgMood: 0, avgWealth: 0, unemploymentRate: 0 };
     const avgMood = agents.reduce((s, a) => s + a.mood, 0) / agents.length;
     const avgWealth = agents.reduce((s, a) => s + a.money, 0) / agents.length;
-    const employed = agents.filter(a => a.employerId != null).length;
-    const unemploymentRate = ((agents.length - employed) / agents.length) * 100;
+    // Безработица = только среди трудоспособных (не пенсионеры)
+    const workingAge = agents.filter(a => !a.isRetired);
+    const employed = workingAge.filter(a => a.employerId != null).length;
+    const unemploymentRate = workingAge.length > 0
+      ? ((workingAge.length - employed) / workingAge.length) * 100
+      : 0;
     return { avgMood, avgWealth, unemploymentRate };
   }
 
@@ -2479,6 +2487,7 @@ class SimulationEngine {
         socialization: a.socialization,
         currentAction: a.currentAction,
         employerId: a.employerId,
+        isRetired: a.isRetired,
       })),
       total,
       page,
