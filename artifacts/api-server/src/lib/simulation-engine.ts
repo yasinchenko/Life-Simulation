@@ -74,16 +74,19 @@ interface BusinessState extends Business {
   ticksUnprofitable: number; // how many consecutive ticks with negative balance
 }
 
-// Max hiring capacity per business type
+// Max hiring capacity per business type.
+// With daily salary (baseSalary=50/day), businesses can afford several employees:
+//   food/service revenue ≈ 3000-4000/day; wages = N × 50/day → profitable up to N≈60
+//   Keep N moderate to spread jobs across businesses without over-crowding
 const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = {
   food:     5,
   service:  6,
-  farm:     8,
-  workshop: 7,
-  hospital: 12,
-  school:   10,
-  park:     8,
-  temple:   6,
+  farm:     3,
+  workshop: 3,
+  hospital: 5,
+  school:   3,
+  park:     2,
+  temple:   2,
 };
 
 interface GoodState extends Good {}
@@ -564,6 +567,23 @@ class SimulationEngine {
     }
     for (const b of rows) {
       this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+    }
+
+    // Startup cleanup: fire excess employees beyond maxEmployees cap.
+    // Needed after parameter changes that reduce capacity limits.
+    for (const biz of this.businesses.values()) {
+      if (biz.employeeCount <= biz.maxEmployees) continue;
+      // Find agents employed at this business and fire the excess
+      let excess = biz.employeeCount - biz.maxEmployees;
+      for (const agent of this.agents.values()) {
+        if (excess <= 0) break;
+        if (agent.employerId === biz.id) {
+          agent.employerId = null;
+          agent.jobStartTick = null;
+          biz.employeeCount--;
+          excess--;
+        }
+      }
     }
   }
 
@@ -1150,21 +1170,13 @@ class SimulationEngine {
       }
     }
 
-    // Лимиты сотрудников для публичных служб — они не должны конкурировать
-    // с коммерческими бизнесами за трудовые ресурсы
-    const PUBLIC_SERVICE_MAX_EMPLOYEES: Record<string, number> = {
-      school: 4,   // не более 4 на каждую школу
-      park: 3,     // не более 3 на каждый парк
-      temple: 2,   // не более 2 на храм
-      hospital: 5, // больницы могут держать больше персонала
-    };
     // Include businesses with balance > -200 so that recovering businesses can still hire
     const availableBusinessIds = Array.from(this.businesses.values())
       .filter(b => {
         if (b.balance <= -200) return false;
         if (b.type === "farm" || b.type === "workshop") return false;
-        const cap = PUBLIC_SERVICE_MAX_EMPLOYEES[b.type];
-        if (cap != null && b.employeeCount >= cap) return false;
+        // Use maxEmployees as the single source of truth for hiring capacity
+        if (b.employeeCount >= b.maxEmployees) return false;
         return true;
       })
       .map(b => b.id);
@@ -1219,6 +1231,25 @@ class SimulationEngine {
           runningBudget -= pensionAmount;
           dbgPensionRecipients++;
           dbgMoneyIn += pensionAmount;
+        }
+      }
+
+      // ── Daily payroll ─────────────────────────────────────────────────────
+      // Salary is paid ONCE per game day (not every tick). This keeps business
+      // wage costs predictable: 1 employee costs baseSalary per day, not per tick.
+      if (isNewDay && !agent.isRetired && agent.employerId != null) {
+        const payBiz = this.businesses.get(agent.employerId);
+        if (payBiz) {
+          const salary = calcSalary(baseSalary, agent.careerLevel);
+          const tax = salary * taxRate;
+          const netPay = salary - tax;
+          agent.money += netPay;
+          payBiz.balance -= salary;
+          taxRevenue += tax;
+          runningBudget += tax;
+          gdp += salary;
+          dbgMoneyIn += netPay;
+          dbgWagesPaid += salary;
         }
       }
 
@@ -1509,22 +1540,8 @@ class SimulationEngine {
         } else if (!foodGood || agent.money < (foodGood?.currentPrice ?? 0)) {
           if (!foodGood) dbgFailedNoGoods++;
           else dbgFailedNoMoney++;
-          if (agent.employerId) {
-            agent.currentAction = "work";
-            const salary = calcSalary(baseSalary, agent.careerLevel);
-            const tax = salary * taxRate;
-            income = salary - tax;
-            agent.money += income;
-            taxRevenue += tax;
-            runningBudget += tax;
-            gdp += salary;
-            const biz = this.businesses.get(agent.employerId);
-            if (biz) biz.balance -= salary;
-            dbgMoneyIn += income;
-            dbgWagesPaid += salary;
-          } else {
-            agent.currentAction = "idle";
-          }
+          // No food available or can't afford — work to earn (salary paid daily, not per tick)
+          agent.currentAction = agent.employerId ? "work" : "idle";
         }
       } else if (criticalNeed === "comfort") {
         agent.needs.comfort = clamp(agent.needs.comfort + rand(20, 40));
@@ -1584,7 +1601,7 @@ class SimulationEngine {
           // Фиксированный тариф обслуживания вместо рыночной цены.
           // Рыночная цена (currentPrice) используется только для расчёта качества,
           // но государство платит школе только базовый тариф на содержание.
-          const maintenanceCost = 18; // фиксированный тариф за посещение школы
+          const maintenanceCost = 45; // raised 18→45: must cover 3 teacher salaries (baseSalary=50 × 3 × ~30% utilisation)
           // Интеллект усиливает усвоение знаний: intel=50 → ×1.0, intel=90 → ×1.4
           const intelFactor = 0.5 + (agent.intelligence ?? 50) / 100;
           // Agent uses service for free
@@ -1616,7 +1633,7 @@ class SimulationEngine {
         const parkGood = this.pickGoodByPreference("park", agent.personality, agent.socialization, Infinity);
         if (parkGood) {
           // Фиксированный тариф обслуживания парка вместо рыночной цены
-          const maintenanceCost = 14; // фиксированный тариф за посещение парка
+          const maintenanceCost = 30; // raised 14→30: covers 2 park worker salaries
           // Agent uses park for free
           agent.needs.entertainment = clamp(agent.needs.entertainment + rand(25, 45));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
@@ -1653,7 +1670,7 @@ class SimulationEngine {
           const biz = templeGood.businessId ? this.businesses.get(templeGood.businessId) : null;
           if (biz) biz.balance += templeGood.currentPrice;
           // Государственный культурный грант: поддержка религиозных институтов
-          const templeGovGrant = 15;
+          const templeGovGrant = 35; // raised 15→35: covers 2 temple worker salaries
           if (biz) biz.balance += templeGovGrant;
           runningBudget -= templeGovGrant;
           publicServiceSpend += templeGovGrant;
@@ -1666,22 +1683,10 @@ class SimulationEngine {
           agent.currentAction = "pray";
         }
       } else if (criticalNeed === "financialSafety") {
-        // Financial crisis: prioritise earning money
+        // Financial crisis: prioritise earning money (salary paid daily, not per-tick)
         if (agent.employerId) {
-          // Work urgently for income
-          const salary = calcSalary(baseSalary, agent.careerLevel);
-          const tax = salary * taxRate;
-          income = salary - tax;
-          agent.money += income;
-          taxRevenue += tax;
-          runningBudget += tax;
-          gdp += salary;
-          const biz = this.businesses.get(agent.employerId);
-          if (biz) biz.balance -= salary;
           agent.currentAction = "work";
-          dbgMoneyIn += income;
-          dbgWagesPaid += salary;
-          agent.needs.financialSafety = clamp(agent.needs.financialSafety + rand(8, 15));
+          agent.needs.financialSafety = clamp(agent.needs.financialSafety + rand(3, 7));
         } else {
           // Unemployed: urgently seek a job — no special subsidy, standard support applies separately
           const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
@@ -1698,22 +1703,10 @@ class SimulationEngine {
           }
         }
       } else if (criticalNeed === "housingSafety") {
-        // Housing crisis: urgently get a job (income = rent)
+        // Housing crisis: urgently get a job (salary paid daily, not per-tick)
         if (agent.employerId) {
-          // Already employed — work for stable income
-          const salary = calcSalary(baseSalary, agent.careerLevel);
-          const tax = salary * taxRate;
-          income = salary - tax;
-          agent.money += income;
-          taxRevenue += tax;
-          runningBudget += tax;
-          gdp += salary;
-          const biz = this.businesses.get(agent.employerId);
-          if (biz) biz.balance -= salary;
           agent.currentAction = "work";
-          dbgMoneyIn += income;
-          dbgWagesPaid += salary;
-          agent.needs.housingSafety = clamp(agent.needs.housingSafety + rand(6, 12));
+          agent.needs.housingSafety = clamp(agent.needs.housingSafety + rand(3, 8));
         } else {
           // No housing: desperately seek employment — no special subsidy, standard support applies separately
           const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
@@ -1756,34 +1749,12 @@ class SimulationEngine {
             agent.jobStartTick = this.state.tick;
             newBiz.employeeCount++;
             agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBiz.id, businessName: newBiz.name }];
-            // Небольшой подъём wellbeing от смены работы
+            // Небольшой подъём wellbeing от смены работы (зарплата — раз в день)
             agent.needs.wellbeing = clamp(agent.needs.wellbeing + rand(5, 12));
             agent.currentAction = "work";
-            // Доход с нового места
-            const salary = calcSalary(baseSalary, agent.careerLevel);
-            const tax = salary * taxRate;
-            income = salary - tax;
-            agent.money += income;
-            taxRevenue += tax;
-            runningBudget += tax;
-            gdp += salary;
-            newBiz.balance -= salary;
-            dbgMoneyIn += income;
-            dbgWagesPaid += salary;
           } else {
-            // Нет подходящих мест — работаем на текущем, wellbeing немного поднимается от стабильности
-            const salary = calcSalary(baseSalary, agent.careerLevel);
-            const tax = salary * taxRate;
-            income = salary - tax;
-            agent.money += income;
-            taxRevenue += tax;
-            runningBudget += tax;
-            gdp += salary;
-            const biz = this.businesses.get(agent.employerId);
-            if (biz) biz.balance -= salary;
+            // Нет подходящих мест — работаем на текущем (зарплата — раз в день)
             agent.currentAction = "work";
-            dbgMoneyIn += income;
-            dbgWagesPaid += salary;
           }
         } else {
           // Безработный — любая работа улучшит wellbeing
@@ -1818,22 +1789,8 @@ class SimulationEngine {
         agent.mood = clamp(agent.mood + rand(2, 6));
         agent.currentAction = "socialize";
       } else {
-        if (agent.employerId) {
-          const salary = calcSalary(baseSalary, agent.careerLevel);
-          const tax = salary * taxRate;
-          income = salary - tax;
-          agent.money += income;
-          taxRevenue += tax;
-          runningBudget += tax;
-          gdp += salary;
-          const biz = this.businesses.get(agent.employerId);
-          if (biz) biz.balance -= salary;
-          agent.currentAction = "work";
-          dbgMoneyIn += income;
-          dbgWagesPaid += salary;
-        } else {
-          agent.currentAction = "idle";
-        }
+        // Default action: work if employed, idle otherwise (salary paid once per day)
+        agent.currentAction = agent.employerId ? "work" : "idle";
       }
 
       // Настроение конвергирует к "целевому" значению на основе взвешенного
