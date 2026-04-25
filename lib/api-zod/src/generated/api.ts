@@ -160,10 +160,16 @@ export const GetAgentResponse = zod.object({
   "isRetired": zod.boolean().describe('Whether this agent has retired'),
   "jobHistory": zod.array(zod.object({
     "tick": zod.number(),
-    "event": zod.enum(["hired", "fired", "retired"]),
+    "event": zod.enum(["hired", "fired", "retired", "quit", "promoted"]),
     "businessId": zod.number().nullable(),
     "businessName": zod.string().nullable(),
-  })).describe('Most recent 20 job events for this agent')
+    "duration": zod.number().optional(),
+  })).describe('Most recent 20 job events for this agent'),
+  "employerName": zod.string().nullable().optional(),
+  "jobStartTick": zod.number().nullable().optional(),
+  "jobTenure": zod.number().nullable().optional(),
+  "totalJobs": zod.number().optional(),
+  "promotions": zod.number().optional(),
 }))
 
 

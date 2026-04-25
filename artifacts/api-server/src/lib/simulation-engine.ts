@@ -50,9 +50,10 @@ type AgentSortKey = typeof AGENT_SORT_KEYS[number];
 
 interface JobHistoryEntry {
   tick: number;
-  event: "hired" | "fired" | "retired";
+  event: "hired" | "fired" | "retired" | "quit" | "promoted";
   businessId: number | null;
   businessName: string | null;
+  duration?: number;
 }
 
 interface AgentState extends Agent {
@@ -60,6 +61,7 @@ interface AgentState extends Agent {
   needsId: number;
   recentActions: string[];
   jobHistory: JobHistoryEntry[];
+  jobStartTick: number | null;
 }
 
 interface BusinessState extends Business {
@@ -333,10 +335,13 @@ class SimulationEngine {
       const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, health: 80, sleep: 80, education: 70, entertainment: 70, faith: 60, id: 0 };
       let jobHistory: JobHistoryEntry[] = [];
       try { jobHistory = JSON.parse(agent.jobHistory ?? "[]"); } catch { jobHistory = []; }
+      // Derive jobStartTick from last "hired" entry in job history
+      const lastHired = [...jobHistory].reverse().find(e => e.event === "hired");
       this.agents.set(agent.id, {
         ...agent,
         needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health, sleep: needs.sleep, education: needs.education, entertainment: needs.entertainment, faith: needs.faith },
         needsId: needs.id, recentActions: [], jobHistory,
+        jobStartTick: agent.employerId ? (lastHired?.tick ?? 0) : null,
       });
     }
   }
@@ -780,6 +785,7 @@ class SimulationEngine {
           needsId: needs.id,
           recentActions: [],
           jobHistory: agent.employerId ? [{ tick: 0, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }] : [],
+          jobStartTick: agent.employerId ? 0 : null,
         });
         if (agent.employerId) {
           const biz = this.businesses.get(agent.employerId);
@@ -958,8 +964,10 @@ class SimulationEngine {
           if (agent.employerId != null) {
             const oldBiz = this.businesses.get(agent.employerId);
             if (oldBiz) oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
-            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null }];
+            const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null, duration: tenure }];
             agent.employerId = null;
+            agent.jobStartTick = null;
           } else {
             agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
           }
@@ -1002,8 +1010,41 @@ class SimulationEngine {
         if (employer && employer.balance < 0 && Math.random() < 0.5) {
           employer.employeeCount = Math.max(0, employer.employeeCount - 1);
           employer.firedThisTick++;
-          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: agent.employerId, businessName: employer.name }];
+          const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: agent.employerId, businessName: employer.name, duration: tenure }];
           agent.employerId = null;
+          agent.jobStartTick = null;
+        }
+      }
+
+      // Voluntary job switching: unhappy employed agents quit to seek better work (3% chance when mood < 35 or money < 30)
+      if (!agent.isRetired && agent.employerId != null && Math.random() < 0.03) {
+        const isUnhappy = agent.mood < 35 || (agent.money < 30 && agent.needs.hunger < 35);
+        if (isUnhappy) {
+          const currentBiz = this.businesses.get(agent.employerId);
+          if (currentBiz) {
+            currentBiz.employeeCount = Math.max(0, currentBiz.employeeCount - 1);
+            currentBiz.firedThisTick++;
+            const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "quit", businessId: agent.employerId, businessName: currentBiz.name, duration: tenure }];
+            agent.employerId = null;
+            agent.jobStartTick = null;
+          }
+        }
+      }
+
+      // Promotion: employed agents with good tenure (100+ ticks) and decent mood get promoted (0.5% chance/tick)
+      if (!agent.isRetired && agent.employerId != null && agent.jobStartTick != null) {
+        const tenure = this.state.tick - agent.jobStartTick;
+        if (tenure >= 100 && agent.mood > 50 && Math.random() < 0.005) {
+          const biz = this.businesses.get(agent.employerId);
+          if (biz) {
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "promoted", businessId: agent.employerId, businessName: biz.name }];
+            // Promotion bonus
+            const bonus = rand(10, 30);
+            agent.money += bonus;
+            agent.mood = clamp(agent.mood + rand(3, 8));
+          }
         }
       }
 
@@ -1013,6 +1054,7 @@ class SimulationEngine {
         const newBiz = this.businesses.get(newBizId);
         if (newBiz) {
           agent.employerId = newBizId;
+          agent.jobStartTick = this.state.tick;
           newBiz.employeeCount++;
           newBiz.hiredThisTick++;
           agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBizId, businessName: newBiz.name }];
@@ -1485,6 +1527,7 @@ class SimulationEngine {
         jobHistory: agent.employerId
           ? [{ tick: this.state.tick, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }]
           : [],
+        jobStartTick: agent.employerId ? this.state.tick : null,
       });
       if (agent.employerId) {
         const biz = this.businesses.get(agent.employerId);
@@ -1949,6 +1992,12 @@ class SimulationEngine {
         entertainment: Math.round(agent.needs.entertainment * 10) / 10,
         faith: Math.round(agent.needs.faith * 10) / 10,
       },
+      // Career info
+      employerName: agent.employerId ? (this.businesses.get(agent.employerId)?.name ?? null) : null,
+      jobStartTick: agent.jobStartTick,
+      jobTenure: agent.employerId && agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : null,
+      totalJobs: agent.jobHistory.filter(e => e.event === "hired").length,
+      promotions: agent.jobHistory.filter(e => e.event === "promoted").length,
     };
   }
 
