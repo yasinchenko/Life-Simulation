@@ -1114,9 +1114,23 @@ class SimulationEngine {
       }
     }
 
+    // Лимиты сотрудников для публичных служб — они не должны конкурировать
+    // с коммерческими бизнесами за трудовые ресурсы
+    const PUBLIC_SERVICE_MAX_EMPLOYEES: Record<string, number> = {
+      school: 4,   // не более 4 на каждую школу
+      park: 3,     // не более 3 на каждый парк
+      temple: 2,   // не более 2 на храм
+      hospital: 5, // больницы могут держать больше персонала
+    };
     // Include businesses with balance > -200 so that recovering businesses can still hire
     const availableBusinessIds = Array.from(this.businesses.values())
-      .filter(b => b.balance > -200 && b.type !== "farm" && b.type !== "workshop")
+      .filter(b => {
+        if (b.balance <= -200) return false;
+        if (b.type === "farm" || b.type === "workshop") return false;
+        const cap = PUBLIC_SERVICE_MAX_EMPLOYEES[b.type];
+        if (cap != null && b.employeeCount >= cap) return false;
+        return true;
+      })
       .map(b => b.id);
 
     for (const agentId of agentIds) {
@@ -1492,7 +1506,10 @@ class SimulationEngine {
         // Schools are publicly funded — free for all agents, paid by government budget
         const schoolGood = this.pickAvailableGood("school");
         if (schoolGood) {
-          const cost = schoolGood.currentPrice;
+          // Фиксированный тариф обслуживания вместо рыночной цены.
+          // Рыночная цена (currentPrice) используется только для расчёта качества,
+          // но государство платит школе только базовый тариф на содержание.
+          const maintenanceCost = 18; // фиксированный тариф за посещение школы
           // Интеллект усиливает усвоение знаний: intel=50 → ×1.0, intel=90 → ×1.4
           const intelFactor = 0.5 + (agent.intelligence ?? 50) / 100;
           // Agent uses service for free
@@ -1503,14 +1520,14 @@ class SimulationEngine {
           agent.intelligence = Math.min(100, (agent.intelligence ?? 50) + rand(0.1, 0.3));
           schoolGood.demand = clamp(schoolGood.demand + 1, 0, 200);
           schoolGood.supply = clamp(schoolGood.supply - 1, 0, 200);
-          // Накопление качества (государство платит — деньги всё равно текут в систему)
-          schoolGood.quality = Math.min(100, schoolGood.quality + cost / 1000);
-          // Government pays the school
+          // Накопление качества
+          schoolGood.quality = Math.min(100, schoolGood.quality + maintenanceCost / 1000);
+          // Government pays the school a fixed maintenance fee
           const biz = schoolGood.businessId ? this.businesses.get(schoolGood.businessId) : null;
-          if (biz) biz.balance += cost;
-          runningBudget -= cost;
-          publicServiceSpend += cost;
-          gdp += cost;
+          if (biz) biz.balance += maintenanceCost;
+          runningBudget -= maintenanceCost;
+          publicServiceSpend += maintenanceCost;
+          gdp += maintenanceCost;
           dbgSuccessful++;
         } else {
           // No school available — self-study at home (intelligence still helps)
@@ -1523,7 +1540,8 @@ class SimulationEngine {
         // Consumer matrix still applies for quality/tier preference
         const parkGood = this.pickGoodByPreference("park", agent.personality, agent.socialization, Infinity);
         if (parkGood) {
-          const cost = parkGood.currentPrice;
+          // Фиксированный тариф обслуживания парка вместо рыночной цены
+          const maintenanceCost = 14; // фиксированный тариф за посещение парка
           // Agent uses park for free
           agent.needs.entertainment = clamp(agent.needs.entertainment + rand(25, 45));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
@@ -1532,13 +1550,13 @@ class SimulationEngine {
           parkGood.demand = clamp(parkGood.demand + 1, 0, 200);
           parkGood.supply = clamp(parkGood.supply - 1, 0, 200);
           // Накопление качества
-          parkGood.quality = Math.min(100, parkGood.quality + cost / 1000);
-          // Government pays the park
+          parkGood.quality = Math.min(100, parkGood.quality + maintenanceCost / 1000);
+          // Government pays the park a fixed maintenance fee
           const biz = parkGood.businessId ? this.businesses.get(parkGood.businessId) : null;
-          if (biz) biz.balance += cost;
-          runningBudget -= cost;
-          publicServiceSpend += cost;
-          gdp += cost;
+          if (biz) biz.balance += maintenanceCost;
+          runningBudget -= maintenanceCost;
+          publicServiceSpend += maintenanceCost;
+          gdp += maintenanceCost;
           dbgSuccessful++;
         } else {
           // No park available — leisure at home
