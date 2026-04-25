@@ -1364,12 +1364,15 @@ class SimulationEngine {
 
       agent.needs.hunger = clamp(agent.needs.hunger - needDecayRate * rand(0.5, 1.5));
       agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
-      agent.needs.social = clamp(agent.needs.social - needDecayRate * rand(0.4, 1.2));
+      // Общение: по спеку -1 каждые 4 часа ≈ 0.25/тик — не масштабируется needDecayRate
+      agent.needs.social = clamp(agent.needs.social - rand(0.15, 0.4));
       agent.needs.sleep = clamp(agent.needs.sleep - 2.5 * rand(0.8, 1.2));
-      // New needs — decay slower (every other tick effectively via rand)
-      agent.needs.education = clamp(agent.needs.education - needDecayRate * rand(0.1, 0.4));
-      agent.needs.entertainment = clamp(agent.needs.entertainment - needDecayRate * rand(0.15, 0.5));
-      agent.needs.faith = clamp(agent.needs.faith - needDecayRate * rand(0.05, 0.25));
+      // Образование: по спеку не расходуется — очень медленное снижение для устойчивости
+      agent.needs.education = clamp(agent.needs.education - rand(0.05, 0.15));
+      // Развлечения: по спеку -0.5/час ≈ 0.5/тик
+      agent.needs.entertainment = clamp(agent.needs.entertainment - rand(0.3, 0.7));
+      // Вера: медленный распад
+      agent.needs.faith = clamp(agent.needs.faith - rand(0.1, 0.3));
 
       // Financial safety: decays when low on money, recovers when financially stable
       if (agent.money < 50) {
@@ -2029,25 +2032,32 @@ class SimulationEngine {
   }
 
   private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number; socialRating: number }): string {
-    // Priority 1-4: critical physical needs
-    if (needs.health < 20) return "health";
-    if (needs.sleep < 25) return "sleep";
-    if (needs.hunger < 30) return "hunger";
+    // Priority 1-4: critical physical needs — thresholds aligned with spec v1.6
+    if (needs.health < 50) return "health";       // spec: < 60
+    if (needs.sleep < 45) return "sleep";          // spec: < 50
+    if (needs.hunger < 55) return "hunger";        // spec: < 70
     // Priority 5-7: safety needs (trigger before social/entertainment)
     if (needs.financialSafety < 30) return "financialSafety";
     if (needs.housingSafety < 25) return "housingSafety";
-    if (needs.physicalSafety < 40) return "physicalSafety";
-    // Priority 8+: secondary social/growth needs — any below 25 triggers action
+    if (needs.physicalSafety < 45) return "physicalSafety"; // spec: < 50
+    // Priority 8+: secondary social/growth needs — individual thresholds per spec
     // socialRating: lower threshold (30) since it moves slowly (daily recalc)
     if (needs.socialRating < 30) return "socialRating";
     const secondary: Array<[string, number]> = [
-      ["comfort", needs.comfort],
-      ["social", needs.social],
-      ["education", needs.education],
+      ["comfort",       needs.comfort],
+      ["social",        needs.social],
       ["entertainment", needs.entertainment],
-      ["faith", needs.faith],
+      ["education",     needs.education],
+      ["faith",         needs.faith],
     ];
-    const critical = secondary.filter(([, v]) => v < 25);
+    const thresholds: Record<string, number> = {
+      comfort: 35,
+      social: 45,        // decay now much slower, so threshold can be higher
+      entertainment: 50, // spec: < 60
+      education: 30,
+      faith: 30,
+    };
+    const critical = secondary.filter(([name, v]) => v < (thresholds[name] ?? 30));
     if (critical.length > 0) {
       critical.sort((a, b) => a[1] - b[1]);
       return critical[0][0];
