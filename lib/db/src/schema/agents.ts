@@ -39,6 +39,7 @@ export const needsTable = pgTable("needs", {
   financialSafety: real("financial_safety").notNull().default(80),
   physicalSafety: real("physical_safety").notNull().default(80),
   socialRating: real("social_rating").notNull().default(50),
+  wellbeing: real("wellbeing").notNull().default(70),
 });
 
 export const relationsTable = pgTable("relations", {

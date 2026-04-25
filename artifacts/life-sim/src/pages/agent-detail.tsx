@@ -248,6 +248,9 @@ export default function AgentDetailPage() {
         {agent.needs.faith != null && (
           <NeedsBar label="Вера" value={agent.needs.faith} icon={Star} color="hsl(35,90%,55%)" />
         )}
+        {agent.needs.wellbeing != null && (
+          <NeedsBar label="Благосостояние" value={agent.needs.wellbeing} icon={TrendingUp} color="hsl(170,70%,45%)" />
+        )}
       </div>
 
       {/* ── Consumer preference matrix ──────────────────────────────────────── */}

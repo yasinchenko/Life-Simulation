@@ -384,6 +384,7 @@ export const GetNeedsStatsResponse = zod.object({
   housingSafety: needStatShape,
   physicalSafety: needStatShape,
   socialRating: needStatShape,
+  wellbeing: needStatShape,
 })
 
 

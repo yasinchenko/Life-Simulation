@@ -99,6 +99,7 @@ interface NeedsStats {
   housingSafety: NeedStat;
   physicalSafety: NeedStat;
   socialRating: NeedStat;
+  wellbeing: NeedStat;
 }
 
 const NEED_META: { key: keyof NeedsStats; label: string; color: string }[] = [
@@ -114,6 +115,7 @@ const NEED_META: { key: keyof NeedsStats; label: string; color: string }[] = [
   { key: "education",       label: "Образование",         color: "hsl(270,70%,60%)"  },
   { key: "faith",           label: "Вера",                color: "hsl(35,90%,55%)"   },
   { key: "socialRating",    label: "Соц. рейтинг",        color: "hsl(210,100%,55%)" },
+  { key: "wellbeing",       label: "Благосостояние",      color: "hsl(170,70%,45%)"  },
 ];
 
 function needBarColor(avg: number): string {

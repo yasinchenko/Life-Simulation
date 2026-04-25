@@ -50,6 +50,7 @@ export interface AgentNeeds {
   financialSafety?: number;
   physicalSafety?: number;
   socialRating?: number;
+  wellbeing?: number;
 }
 
 export interface AgentRelation {
