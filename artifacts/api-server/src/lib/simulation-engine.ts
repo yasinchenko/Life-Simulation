@@ -1453,6 +1453,12 @@ class SimulationEngine {
             const biz = this.businesses.get(bizId);
             if (biz) biz.balance += hospitalGood.currentPrice;
           }
+          // Государственное со-финансирование медицины: фиксированный грант за каждый визит
+          const hospGovGrant = 25;
+          const hospBiz = hospitalGood.businessId ? this.businesses.get(hospitalGood.businessId) : null;
+          if (hospBiz) hospBiz.balance += hospGovGrant;
+          runningBudget -= hospGovGrant;
+          publicServiceSpend += hospGovGrant;
           gdp += hospitalGood.currentPrice;
           dbgMoneyOut += hospitalGood.currentPrice;
           dbgSuccessful++;
@@ -1505,14 +1511,23 @@ class SimulationEngine {
       } else if (criticalNeed === "comfort") {
         agent.needs.comfort = clamp(agent.needs.comfort + rand(20, 40));
         agent.currentAction = "rest";
-        const serviceGood = this.pickGoodByPreference("service", agent.personality, agent.socialization, agent.money * 0.5);
-        if (serviceGood && agent.money >= serviceGood.currentPrice * 0.5) {
-          const servicePayment = serviceGood.currentPrice * 0.5;
+        const serviceGood = this.pickGoodByPreference("service", agent.personality, agent.socialization, agent.money);
+        if (serviceGood && agent.money >= serviceGood.currentPrice) {
+          const servicePayment = serviceGood.currentPrice;
           agent.money -= servicePayment;
-          serviceGood.demand = clamp(serviceGood.demand + 0.5, 0, 200);
+          serviceGood.demand = clamp(serviceGood.demand + 1, 0, 200);
+          serviceGood.supply = clamp(serviceGood.supply - 1, 0, 200);
           // Накопление качества
           serviceGood.quality = Math.min(100, serviceGood.quality + servicePayment / 1000);
+          // Выручка поступает в баланс сервис-бизнеса
+          const bizId = serviceGood.businessId;
+          if (bizId) {
+            const biz = this.businesses.get(bizId);
+            if (biz) biz.balance += servicePayment;
+          }
+          gdp += servicePayment;
           dbgMoneyOut += servicePayment;
+          dbgSuccessful++;
         }
       } else if (criticalNeed === "social") {
         const partnerId = this.pickSocialPartner(agentId, agentIds);
@@ -1619,6 +1634,11 @@ class SimulationEngine {
           templeGood.quality = Math.min(100, templeGood.quality + templeGood.currentPrice / 1000);
           const biz = templeGood.businessId ? this.businesses.get(templeGood.businessId) : null;
           if (biz) biz.balance += templeGood.currentPrice;
+          // Государственный культурный грант: поддержка религиозных институтов
+          const templeGovGrant = 15;
+          if (biz) biz.balance += templeGovGrant;
+          runningBudget -= templeGovGrant;
+          publicServiceSpend += templeGovGrant;
           gdp += templeGood.currentPrice;
           dbgMoneyOut += templeGood.currentPrice;
           dbgSuccessful++;
@@ -2237,11 +2257,18 @@ class SimulationEngine {
       return biz?.type === "workshop";
     });
 
-    // Food businesses buy raw ingredients from farms
+    // Food businesses buy raw ingredients from farms ONLY when supply is low
     for (const biz of this.businesses.values()) {
       if (biz.type !== "food") continue;
-      const farmGood = farmGoods.find(g => g.supply > 20) ?? null;
       const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
+
+      // Skip B2B purchase if consumer good supply is already healthy (≥ 60)
+      if (consumerGood && consumerGood.supply >= 60) {
+        b2bSuccess++;
+        continue;
+      }
+
+      const farmGood = farmGoods.find(g => g.supply > 20) ?? null;
 
       if (farmGood && biz.balance >= farmGood.currentPrice) {
         const cost = farmGood.currentPrice;
@@ -2264,11 +2291,18 @@ class SimulationEngine {
       }
     }
 
-    // Service businesses buy raw materials from workshops
+    // Service businesses buy raw materials from workshops ONLY when supply is low
     for (const biz of this.businesses.values()) {
       if (biz.type !== "service") continue;
-      const wsGood = workshopGoods.find(g => g.supply > 15) ?? null;
       const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
+
+      // Skip B2B purchase if consumer good supply is already healthy (≥ 60)
+      if (consumerGood && consumerGood.supply >= 60) {
+        b2bSuccess++; // count as "no action needed"
+        continue;
+      }
+
+      const wsGood = workshopGoods.find(g => g.supply > 15) ?? null;
 
       if (wsGood && biz.balance >= wsGood.currentPrice) {
         const cost = wsGood.currentPrice;
