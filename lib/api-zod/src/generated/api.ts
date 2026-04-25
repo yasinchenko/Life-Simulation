@@ -226,7 +226,11 @@ export const GetGovernmentResponse = zod.object({
   "totalPublicServicesPaid": zod.number(),
   "taxRate": zod.number(),
   "subsidyAmount": zod.number(),
-  "pensionRate": zod.number()
+  "pensionRate": zod.number(),
+  "totalGrantsPaid": zod.number(),
+  "grantsIssuedLastDay": zod.number(),
+  "unemploymentRatePct": zod.number(),
+  "grantThresholdPct": zod.number()
 })
 
 

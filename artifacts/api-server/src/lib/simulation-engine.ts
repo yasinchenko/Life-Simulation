@@ -355,6 +355,8 @@ class SimulationEngine {
   private prevAvgPrice = 0;
   private lastBirths = 0;
   private lastDeaths = 0;
+  private totalGrantsPaid = 0;
+  private lastGrantsIssued = 0;
 
   async initialize(): Promise<void> {
     logger.info("Initializing simulation engine...");
@@ -1816,6 +1818,13 @@ class SimulationEngine {
       taxRevenue += corpTax;
       this.state.governmentBudget = runningBudget;
       this.state.totalTaxCollected += corpTax;
+
+      // ── Government business grants ─────────────────────────────────────────
+      // When unemployment exceeds threshold and budget allows, fund new businesses
+      const grantResult = await this.processGovernmentGrants();
+      this.totalGrantsPaid += grantResult.totalSpent;
+      this.lastGrantsIssued = grantResult.grantsIssued;
+      runningBudget = this.state.governmentBudget; // sync after grants deducted
     }
 
     const elapsed = Date.now() - startTime;
@@ -2262,6 +2271,97 @@ class SimulationEngine {
     }
   }
 
+  private async processGovernmentGrants(): Promise<{ grantsIssued: number; totalSpent: number }> {
+    const GRANT_AMOUNT = 3000;
+    const MAX_GRANTS_PER_DAY = 3;
+    const UNEMPLOYMENT_THRESHOLD = 0.28; // 28% unemployment triggers grants
+
+    if (this.state.governmentBudget < GRANT_AMOUNT * 2) {
+      return { grantsIssued: 0, totalSpent: 0 };
+    }
+
+    const workingAge = Array.from(this.agents.values()).filter(
+      a => !a.isRetired && a.age >= 18 && a.age <= 65
+    );
+    const unemployed = workingAge.filter(a => a.employerId == null);
+    const unemploymentRate = workingAge.length > 0 ? unemployed.length / workingAge.length : 0;
+
+    if (unemploymentRate < UNEMPLOYMENT_THRESHOLD) {
+      return { grantsIssued: 0, totalSpent: 0 };
+    }
+
+    // Pick candidates: unemployed, not jailed, low money, sorted by highest ambition
+    const candidates = unemployed
+      .filter(a => a.money < 300 && a.jailedUntilTick == null)
+      .sort((a, b) => (b.ambition ?? 50) - (a.ambition ?? 50))
+      .slice(0, MAX_GRANTS_PER_DAY);
+
+    if (candidates.length === 0) return { grantsIssued: 0, totalSpent: 0 };
+
+    let grantsIssued = 0;
+    let totalSpent = 0;
+    const { baseFoodPrice } = this.config;
+
+    const foodCount = Array.from(this.businesses.values()).filter(b => b.type === "food").length;
+    const serviceCount = Array.from(this.businesses.values()).filter(b => b.type === "service").length;
+
+    for (const agent of candidates) {
+      if (this.state.governmentBudget < GRANT_AMOUNT) break;
+
+      const isFood = grantsIssued % 2 === 0;
+      const bizType = isFood ? "food" : "service";
+      const bizNum = isFood ? (foodCount + grantsIssued + 1) : (serviceCount + grantsIssued + 1);
+      const bizName = isFood
+        ? `${pick(FOOD_BUSINESS_NAMES)} №${bizNum}`
+        : `${pick(SERVICE_BUSINESS_NAMES)} №${bizNum}`;
+
+      const [newBiz] = await db.insert(businessesTable).values({
+        name: bizName,
+        type: bizType,
+        balance: GRANT_AMOUNT,
+        productionRate: rand(4, 12),
+        ownerId: agent.id,
+        productivityLevel: 0,
+      }).returning();
+
+      this.businesses.set(newBiz.id, {
+        ...newBiz,
+        employeeCount: 1,
+        firedThisTick: 0,
+        hiredThisTick: 1,
+      });
+
+      const goodName = isFood ? pick(FOOD_GOOD_NAMES) : pick(SERVICE_GOOD_NAMES);
+      const goodPrice = isFood ? baseFoodPrice : baseFoodPrice * 1.5;
+      const [newGood] = await db.insert(goodsTable).values({
+        name: goodName,
+        businessId: newBiz.id,
+        basePrice: goodPrice,
+        currentPrice: goodPrice * (1 + this.config.priceMarkup),
+        quality: rand(40, 70),
+        demand: rand(15, 40),
+        supply: rand(20, 50),
+      }).returning();
+      this.goods.set(newGood.id, { ...newGood });
+
+      agent.employerId = newBiz.id;
+      agent.jobStartTick = this.state.tick;
+      agent.jobHistory = [
+        ...agent.jobHistory,
+        { tick: this.state.tick, event: "hired", businessId: newBiz.id, businessName: bizName },
+      ];
+      agent.money += 200; // small cash stipend alongside the grant
+
+      this.state.governmentBudget -= GRANT_AMOUNT;
+      grantsIssued++;
+      totalSpent += GRANT_AMOUNT;
+
+      logger.debug({ agentId: agent.id, bizName, bizType, unemploymentRate: Math.round(unemploymentRate * 100) }, "Government grant issued");
+    }
+
+    return { grantsIssued, totalSpent };
+  }
+
   private async syncToDB(gdp: number): Promise<void> {
     await this.persistState();
 
@@ -2676,6 +2776,9 @@ class SimulationEngine {
   }
 
   getGovernment() {
+    const workingAge = Array.from(this.agents.values()).filter(a => !a.isRetired && a.age >= 18 && a.age <= 65);
+    const unemployed = workingAge.filter(a => a.employerId == null);
+    const unemploymentRate = workingAge.length > 0 ? unemployed.length / workingAge.length : 0;
     return {
       budget: Math.round(this.state.governmentBudget * 100) / 100,
       totalTaxCollected: Math.round(this.state.totalTaxCollected * 100) / 100,
@@ -2685,6 +2788,10 @@ class SimulationEngine {
       taxRate: this.config.taxRate,
       subsidyAmount: this.config.subsidyAmount,
       pensionRate: this.config.pensionRate,
+      totalGrantsPaid: Math.round(this.totalGrantsPaid * 100) / 100,
+      grantsIssuedLastDay: this.lastGrantsIssued,
+      unemploymentRatePct: Math.round(unemploymentRate * 1000) / 10,
+      grantThresholdPct: 28,
     };
   }
 

@@ -140,6 +140,10 @@ export interface GovernmentState {
   taxRate: number;
   subsidyAmount: number;
   pensionRate: number;
+  totalGrantsPaid: number;
+  grantsIssuedLastDay: number;
+  unemploymentRatePct: number;
+  grantThresholdPct: number;
 }
 
 export interface SimConfig {
