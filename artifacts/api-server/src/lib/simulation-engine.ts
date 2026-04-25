@@ -1384,10 +1384,14 @@ class SimulationEngine {
         const hospitalGood = this.pickAvailableGood("hospital");
         if (hospitalGood && agent.money >= hospitalGood.currentPrice) {
           agent.money -= hospitalGood.currentPrice;
-          agent.needs.health = clamp(agent.needs.health + rand(15, 28));
+          // Качество влияет на восстановление здоровья (quality=50 → ×1.0, 100 → ×1.3, 0 → ×0.7)
+          const hospQMult = 0.7 + hospitalGood.quality * 0.006;
+          agent.needs.health = clamp(agent.needs.health + rand(15, 28) * hospQMult);
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
           agent.currentAction = "heal";
           hospitalGood.demand = clamp(hospitalGood.demand + 1, 0, 200);
+          // Накопление качества: каждые 1000 монет → +1 балл качества
+          hospitalGood.quality = Math.min(100, hospitalGood.quality + hospitalGood.currentPrice / 1000);
           const bizId = hospitalGood.businessId;
           if (bizId) {
             const biz = this.businesses.get(bizId);
@@ -1407,9 +1411,13 @@ class SimulationEngine {
         const foodGood = this.pickGoodByPreference("food", agent.personality, agent.socialization, agent.money);
         if (foodGood && agent.money >= foodGood.currentPrice) {
           agent.money -= foodGood.currentPrice;
-          agent.needs.hunger = clamp(agent.needs.hunger + rand(30, 60));
+          // Качество влияет на насыщение едой (quality=50 → ×1.0, 100 → ×1.3, 0 → ×0.7)
+          const foodQMult = 0.7 + foodGood.quality * 0.006;
+          agent.needs.hunger = clamp(agent.needs.hunger + rand(30, 60) * foodQMult);
           agent.currentAction = "eat";
           foodGood.demand = clamp(foodGood.demand + 1, 0, 200);
+          // Накопление качества: каждые 1000 монет → +1 балл качества
+          foodGood.quality = Math.min(100, foodGood.quality + foodGood.currentPrice / 1000);
           const bizId = foodGood.businessId;
           if (bizId) {
             const biz = this.businesses.get(bizId);
@@ -1443,9 +1451,12 @@ class SimulationEngine {
         agent.currentAction = "rest";
         const serviceGood = this.pickGoodByPreference("service", agent.personality, agent.socialization, agent.money * 0.5);
         if (serviceGood && agent.money >= serviceGood.currentPrice * 0.5) {
-          agent.money -= serviceGood.currentPrice * 0.5;
+          const servicePayment = serviceGood.currentPrice * 0.5;
+          agent.money -= servicePayment;
           serviceGood.demand = clamp(serviceGood.demand + 0.5, 0, 200);
-          dbgMoneyOut += serviceGood.currentPrice * 0.5;
+          // Накопление качества
+          serviceGood.quality = Math.min(100, serviceGood.quality + servicePayment / 1000);
+          dbgMoneyOut += servicePayment;
         }
       } else if (criticalNeed === "social") {
         const partnerId = this.pickSocialPartner(agentId, agentIds);
@@ -1492,6 +1503,8 @@ class SimulationEngine {
           agent.intelligence = Math.min(100, (agent.intelligence ?? 50) + rand(0.1, 0.3));
           schoolGood.demand = clamp(schoolGood.demand + 1, 0, 200);
           schoolGood.supply = clamp(schoolGood.supply - 1, 0, 200);
+          // Накопление качества (государство платит — деньги всё равно текут в систему)
+          schoolGood.quality = Math.min(100, schoolGood.quality + cost / 1000);
           // Government pays the school
           const biz = schoolGood.businessId ? this.businesses.get(schoolGood.businessId) : null;
           if (biz) biz.balance += cost;
@@ -1518,6 +1531,8 @@ class SimulationEngine {
           agent.currentAction = "relax";
           parkGood.demand = clamp(parkGood.demand + 1, 0, 200);
           parkGood.supply = clamp(parkGood.supply - 1, 0, 200);
+          // Накопление качества
+          parkGood.quality = Math.min(100, parkGood.quality + cost / 1000);
           // Government pays the park
           const biz = parkGood.businessId ? this.businesses.get(parkGood.businessId) : null;
           if (biz) biz.balance += cost;
@@ -1540,6 +1555,8 @@ class SimulationEngine {
           agent.currentAction = "pray";
           templeGood.demand = clamp(templeGood.demand + 1, 0, 200);
           templeGood.supply = clamp(templeGood.supply - 1, 0, 200);
+          // Накопление качества
+          templeGood.quality = Math.min(100, templeGood.quality + templeGood.currentPrice / 1000);
           const biz = templeGood.businessId ? this.businesses.get(templeGood.businessId) : null;
           if (biz) biz.balance += templeGood.currentPrice;
           gdp += templeGood.currentPrice;
@@ -2140,7 +2157,8 @@ class SimulationEngine {
 
       // ── Equilibrium price (quality-adjusted base) ─────────────────────────
       // Quality premium: ±10% at quality 0/100; neutral at quality 50
-      const qualityPremium = (good.quality - 50) / 500;
+      // Качество: ±30% к равновесной цене (quality=50 → ×1.0, 100 → ×1.3, 0 → ×0.7)
+      const qualityPremium = (good.quality - 50) / 167;
       const equilibrium = base * (1 + priceMarkup) * (1 + qualityPremium);
 
       // ── Demand-supply pressure ────────────────────────────────────────────
@@ -2158,8 +2176,10 @@ class SimulationEngine {
       const reversion = (equilibrium - good.currentPrice) * reversionRate;
 
       // ── Apply combined adjustment with hard floor/ceiling ─────────────────
-      // Ceiling: 2.5x base for food/service (agent affordability), 3x for others
-      const priceCeiling = (bizType === "food" || bizType === "service" || bizType === "hospital") ? base * 2.5 : base * 3.0;
+      // Ceiling: scales with quality (high-quality goods can command higher prices)
+      const qualityCeilingMult = 1 + (good.quality - 50) / 100; // quality=100 → ×1.5, quality=50 → ×1.0
+      const baseCeiling = (bizType === "food" || bizType === "service" || bizType === "hospital") ? base * 2.5 : base * 3.0;
+      const priceCeiling = baseCeiling * qualityCeilingMult;
       const newPrice = good.currentPrice + pressureChange + reversion;
       good.currentPrice = Math.max(base * 0.3, Math.min(priceCeiling, newPrice));
 
@@ -2227,7 +2247,7 @@ class SimulationEngine {
     const goodsArray = Array.from(this.goods.values());
     for (const good of goodsArray) {
       await db.update(goodsTable)
-        .set({ currentPrice: good.currentPrice, demand: good.demand, supply: good.supply })
+        .set({ currentPrice: good.currentPrice, demand: good.demand, supply: good.supply, quality: good.quality })
         .where(eq(goodsTable.id, good.id));
     }
 

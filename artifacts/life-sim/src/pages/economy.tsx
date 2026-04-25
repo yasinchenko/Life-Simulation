@@ -20,7 +20,7 @@ type GoodItem = NonNullable<ListGoodsQueryResult>[number];
 type ViewMode = "table" | "analysis";
 type BizGroupBy = "type" | "status" | "size";
 type BizSortCol = "label" | "count" | "profitablePct" | "avgBalance" | "totalEmployees" | "avgProduction";
-type GoodSortCol = "name" | "ratio" | "priceDiff" | "demand" | "supply" | "currentPrice";
+type GoodSortCol = "name" | "ratio" | "priceDiff" | "demand" | "supply" | "currentPrice" | "quality";
 
 const TYPE_LABELS: Record<string, string> = {
   food: "Еда",
@@ -150,7 +150,9 @@ export default function EconomyPage() {
     const totalBal = biz.reduce((s, b) => s + b.balance, 0);
     const mostDemanded = [...gds].sort((a, b) => b.demand - a.demand)[0];
     const mostShort = [...gds].sort((a, b) => b.ratio - a.ratio)[0];
-    return { profitable, totalBal, mostDemanded, mostShort };
+    const topQuality = [...gds].sort((a, b) => b.quality - a.quality)[0];
+    const avgQuality = gds.length > 0 ? gds.reduce((s, g) => s + g.quality, 0) / gds.length : 0;
+    return { profitable, totalBal, mostDemanded, mostShort, topQuality, avgQuality };
   }, [businesses, goodsWithRatio]);
 
   const maxAvgBalance = sortedBizGroups.length ? Math.max(...sortedBizGroups.map(g => Math.abs(g.avgBalance))) || 1 : 1;
@@ -226,11 +228,16 @@ export default function EconomyPage() {
 
       {viewMode === "analysis" && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <SmCard label="Прибыльных бизнесов" value={`${summaryStats.profitable} / ${businesses?.length ?? 0}`} color="hsl(173,80%,40%)" />
             <SmCard label="Общий баланс рынка" value={summaryStats.totalBal.toLocaleString()} color={summaryStats.totalBal >= 0 ? "hsl(173,80%,40%)" : "hsl(348,83%,52%)"} />
-            <SmCard label="Самый востребованный" value={summaryStats.mostDemanded?.name ?? "—"} color="hsl(43,100%,50%)" />
             <SmCard label="Дефицит (спрос/пред.)" value={summaryStats.mostShort ? `${summaryStats.mostShort.name} ×${summaryStats.mostShort.ratio.toFixed(1)}` : "—"} color="hsl(348,83%,52%)" />
+          </div>
+          {/* Quality summary row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <SmCard label="Ср. качество товаров" value={summaryStats.avgQuality.toFixed(1)} color={summaryStats.avgQuality > 70 ? "hsl(173,80%,40%)" : summaryStats.avgQuality > 40 ? "hsl(43,100%,50%)" : "hsl(348,83%,52%)"} />
+            <SmCard label="Лучший товар (качество)" value={summaryStats.topQuality ? `${summaryStats.topQuality.name} — ${summaryStats.topQuality.quality.toFixed(1)}` : "—"} color="hsl(173,80%,40%)" />
+            <SmCard label="Самый востребованный" value={summaryStats.mostDemanded?.name ?? "—"} color="hsl(43,100%,50%)" />
           </div>
 
           <div className="bg-card border border-card-border rounded overflow-hidden">
@@ -352,6 +359,7 @@ export default function EconomyPage() {
                 <tr className="border-b border-border bg-muted/20">
                   {([
                     ["name",         "Товар",          "text-left"],
+                    ["quality",      "Качество",       "text-right"],
                     ["ratio",        "Спрос/Пред.",    "text-right"],
                     ["demand",       "Спрос",          "text-right"],
                     ["supply",       "Предложение",    "text-right"],
@@ -375,6 +383,23 @@ export default function EconomyPage() {
                   return (
                     <tr key={g.id} className={cn("border-b border-border/50", i % 2 === 0 ? "" : "bg-muted/10")}>
                       <td className="px-3 py-2.5 font-medium text-foreground">{g.name}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {/* Quality bar */}
+                          <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden hidden sm:block">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{
+                                width: `${g.quality}%`,
+                                background: g.quality > 70 ? "hsl(173,80%,40%)" : g.quality > 40 ? "hsl(43,100%,50%)" : "hsl(348,83%,52%)",
+                              }}
+                            />
+                          </div>
+                          <span className={cn("tabular-nums font-semibold text-xs", g.quality > 70 ? "text-[hsl(173,80%,40%)]" : g.quality > 40 ? "text-[hsl(43,100%,50%)]" : "text-[hsl(348,83%,52%)]")}>
+                            {g.quality.toFixed(1)}
+                          </span>
+                        </div>
+                      </td>
                       <td className="px-3 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <div className="w-16 h-2 bg-muted rounded-full overflow-hidden hidden sm:flex">
@@ -653,7 +678,16 @@ function GoodsTable({ goods, loading }: { goods: GoodItem[]; loading: boolean })
                     </span>
                   </div>
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{good.quality.toFixed(0)}</td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <div className="w-10 h-1.5 bg-muted rounded-full overflow-hidden hidden sm:block">
+                      <div className="h-full rounded-full" style={{ width: `${good.quality}%`, background: good.quality > 70 ? "hsl(173,80%,40%)" : good.quality > 40 ? "hsl(43,100%,50%)" : "hsl(348,83%,52%)" }} />
+                    </div>
+                    <span className={cn("tabular-nums text-xs", good.quality > 70 ? "text-[hsl(173,80%,40%)]" : good.quality > 40 ? "text-[hsl(43,100%,50%)]" : "text-[hsl(348,83%,52%)]")}>
+                      {good.quality.toFixed(1)}
+                    </span>
+                  </div>
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums text-[hsl(43,100%,50%)]">
                   {good.demand.toFixed(1)}
                 </td>
