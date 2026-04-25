@@ -289,7 +289,8 @@ class SimulationEngine {
         running: row.running,
         gameHour: row.gameHour,
         gameDay: row.gameDay,
-        governmentBudget: row.governmentBudget,
+        // Floor at 0 — negative budgets from old buggy code are reset on restart
+        governmentBudget: Math.max(0, row.governmentBudget),
         totalTaxCollected: row.totalTaxCollected,
         totalSubsidiesPaid: row.totalSubsidiesPaid,
         totalPensionPaid: row.totalPensionPaid,
@@ -819,7 +820,12 @@ class SimulationEngine {
 
     const isNewDay = this.state.gameHour === 0;
     const dailyDeaths: number[] = [];
-    const plannedBirths = isNewDay ? Math.max(1, Math.round(this.agents.size * 0.004)) : 0;
+    // Dynamic birth rate: high when far from 1000-agent target, drops at capacity
+    const popTarget = 1000;
+    const birthRate = this.agents.size < popTarget
+      ? Math.max(0.04, 0.08 * (1 - this.agents.size / popTarget)) // 8% → 4% as pop grows
+      : 0.003; // maintenance rate above target
+    const plannedBirths = isNewDay ? Math.max(2, Math.round(this.agents.size * birthRate)) : 0;
 
     let gdp = 0;
     let taxRevenue = 0;
@@ -837,8 +843,9 @@ class SimulationEngine {
 
     const agentIds = Array.from(this.agents.keys());
 
+    // Include businesses with balance > -200 so that recovering businesses can still hire
     const availableBusinessIds = Array.from(this.businesses.values())
-      .filter(b => b.balance > 0)
+      .filter(b => b.balance > -200 && b.type !== "farm" && b.type !== "workshop")
       .map(b => b.id);
 
     for (const agentId of agentIds) {
@@ -880,8 +887,8 @@ class SimulationEngine {
         continue;
       }
 
-      // Pension: only if government budget allows
-      if (agent.isRetired) {
+      // Pension: once per game day only (not every tick)
+      if (isNewDay && agent.isRetired) {
         const pensionAmount = baseSalary * pensionRate;
         if (runningBudget >= pensionAmount) {
           agent.money += pensionAmount;
@@ -903,8 +910,8 @@ class SimulationEngine {
         }
       }
 
-      // Job seeking: unemployed, non-retired agents have a 15% chance to find work
-      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.15) {
+      // Job seeking: unemployed, non-retired agents have a 30% chance to find work
+      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.30) {
         const newBizId = pick(availableBusinessIds);
         const newBiz = this.businesses.get(newBizId);
         if (newBiz) {
@@ -925,7 +932,7 @@ class SimulationEngine {
       if (agent.needs.hunger < 30) healthDelta -= 0.8;  // starvation hurts
       if (agent.needs.sleep < 20) healthDelta -= 1.2;   // exhaustion hurts
       if (agent.needs.hunger > 50 && agent.needs.sleep > 50) healthDelta += 0.2; // natural recovery
-      healthDelta -= 0.03; // slow aging wear
+      healthDelta -= 0.01; // slow aging wear (reduced to prevent unnecessary deaths)
       agent.needs.health = clamp(agent.needs.health + healthDelta);
 
       const criticalNeed = this.getCriticalNeed(agent.needs);
@@ -1048,8 +1055,8 @@ class SimulationEngine {
           (agent.needs.sleep - 50) * 0.005
       );
 
-      // Subsidy: only if government budget allows
-      if (agent.money <= 0 && runningBudget >= subsidyAmount) {
+      // Subsidy: once per game day only, capped at subsidyAmount per day
+      if (isNewDay && agent.money <= 10 && runningBudget >= subsidyAmount) {
         agent.money += subsidyAmount;
         subsidiesPaid += subsidyAmount;
         runningBudget -= subsidyAmount;
@@ -1114,6 +1121,22 @@ class SimulationEngine {
     const chainResult = this.processProductionChains();
     this.updateGoodPrices();
     this.updateBusinesses();
+
+    // Corporate tax: once per game day, 5% of profitable business balance
+    if (isNewDay) {
+      let corpTax = 0;
+      for (const biz of this.businesses.values()) {
+        if (biz.balance > 500) {
+          const tax = biz.balance * 0.05;
+          biz.balance -= tax;
+          corpTax += tax;
+        }
+      }
+      runningBudget += corpTax;
+      taxRevenue += corpTax;
+      this.state.governmentBudget = runningBudget;
+      this.state.totalTaxCollected += corpTax;
+    }
 
     const elapsed = Date.now() - startTime;
     logger.debug({ tick: this.state.tick, elapsed, agentCount: this.agents.size }, "Tick complete");
@@ -1245,7 +1268,7 @@ class SimulationEngine {
   private async spawnNewAgents(count: number): Promise<void> {
     if (count <= 0) return;
     const availableBusinessIds = Array.from(this.businesses.values())
-      .filter(b => b.balance > 0)
+      .filter(b => b.balance > -200 && b.type !== "farm" && b.type !== "workshop")
       .map(b => b.id);
 
     const newAgentData = [];
