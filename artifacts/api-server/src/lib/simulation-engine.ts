@@ -56,7 +56,7 @@ interface JobHistoryEntry {
 }
 
 interface AgentState extends Agent {
-  needs: { hunger: number; comfort: number; social: number; health: number; sleep: number };
+  needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number };
   needsId: number;
   recentActions: string[];
   jobHistory: JobHistoryEntry[];
@@ -102,7 +102,13 @@ const SERVICE_GOOD_NAMES = ["Одежда", "Инструменты", "Быто�
 const HOSPITAL_GOOD_NAMES = ["Лечение", "Медосмотр", "Операция", "Консультация врача", "Физиотерапия"];
 const RAW_FOOD_GOOD_NAMES = ["Зерно", "Сырое молоко", "Овощи с поля", "Яйца", "Мясо сырое", "Мука", "Корм"];
 const RAW_MATERIAL_GOOD_NAMES = ["Детали", "Запчасти", "Сырьё", "Химикаты", "Ткань", "Металл"];
-const ACTIONS = ["eat", "rest", "sleep", "socialize", "work", "idle", "heal"];
+const SCHOOL_BUSINESS_NAMES = ["Школа", "Гимназия", "Лицей", "Колледж", "Университет", "Учебный центр", "Библиотека"];
+const PARK_BUSINESS_NAMES = ["Городской парк", "Кинотеатр", "Спортивный клуб", "Торговый центр", "Театр", "Боулинг", "Аквапарк"];
+const TEMPLE_BUSINESS_NAMES = ["Церковь", "Мечеть", "Часовня", "Монастырь", "Собор", "Молельный дом"];
+const SCHOOL_GOOD_NAMES = ["Урок", "Курс обучения", "Лекция", "Тренинг", "Семинар"];
+const PARK_GOOD_NAMES = ["Прогулка", "Сеанс кино", "Тренировка", "Развлечение", "Экскурсия"];
+const TEMPLE_GOOD_NAMES = ["Молебен", "Богослужение", "Исповедь", "Медитация", "Обряд"];
+const ACTIONS = ["eat", "rest", "sleep", "socialize", "work", "idle", "heal", "study", "relax", "pray"];
 
 function rand(min: number, max: number): number {
   return Math.random() * (max - min) + min;
@@ -137,7 +143,7 @@ export interface TickDebugReport {
   agents: {
     processed: number;
     skipped: number;
-    actions: { work: number; eat: number; rest: number; socialize: number; idle: number };
+    actions: { work: number; eat: number; rest: number; socialize: number; idle: number; sleep?: number; heal?: number; study?: number; relax?: number; pray?: number };
     moneyIn: number;
     moneyOut: number;
   };
@@ -238,6 +244,7 @@ class SimulationEngine {
     } else {
       await this.ensureHospitals();
       await this.ensureFarms();
+      await this.ensurePublicServices();
       if (this.state.running) {
         logger.info("Resuming simulation from saved state");
         this.startTimer();
@@ -312,16 +319,25 @@ class SimulationEngine {
   private async loadAgents(): Promise<void> {
     const agentRows = await db.select().from(agentsTable).limit(5000);
     const needsRows = await db.select().from(needsTable);
-    const needsMap = new Map<number, { hunger: number; comfort: number; social: number; health: number; sleep: number; id: number }>();
+    const needsMap = new Map<number, { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; id: number }>();
     for (const n of needsRows) {
-      needsMap.set(n.agentId, { hunger: n.hunger, comfort: n.comfort, social: n.social, health: n.health ?? 80, sleep: n.sleep ?? 80, id: n.id });
+      needsMap.set(n.agentId, {
+        hunger: n.hunger, comfort: n.comfort, social: n.social,
+        health: n.health ?? 80, sleep: n.sleep ?? 80,
+        education: n.education ?? 70, entertainment: n.entertainment ?? 70, faith: n.faith ?? 60,
+        id: n.id,
+      });
     }
     this.agents.clear();
     for (const agent of agentRows) {
-      const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, health: 80, sleep: 80, id: 0 };
+      const needs = needsMap.get(agent.id) ?? { hunger: 80, comfort: 80, social: 80, health: 80, sleep: 80, education: 70, entertainment: 70, faith: 60, id: 0 };
       let jobHistory: JobHistoryEntry[] = [];
       try { jobHistory = JSON.parse(agent.jobHistory ?? "[]"); } catch { jobHistory = []; }
-      this.agents.set(agent.id, { ...agent, needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health, sleep: needs.sleep }, needsId: needs.id, recentActions: [], jobHistory });
+      this.agents.set(agent.id, {
+        ...agent,
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health, sleep: needs.sleep, education: needs.education, entertainment: needs.entertainment, faith: needs.faith },
+        needsId: needs.id, recentActions: [], jobHistory,
+      });
     }
   }
 
@@ -504,14 +520,71 @@ class SimulationEngine {
     logger.info({ farmCount, workshopCount, goodsCount: savedGoods.length }, "Raw producers spawned for production chains");
   }
 
+  private async ensurePublicServices(): Promise<void> {
+    const existingSchools = Array.from(this.businesses.values()).filter(b => b.type === "school");
+    const existingParks = Array.from(this.businesses.values()).filter(b => b.type === "park");
+    const existingTemples = Array.from(this.businesses.values()).filter(b => b.type === "temple");
+    if (existingSchools.length > 0 && existingParks.length > 0 && existingTemples.length > 0) {
+      logger.info({ schools: existingSchools.length, parks: existingParks.length, temples: existingTemples.length }, "Public services already present, skipping");
+      return;
+    }
+
+    const { baseFoodPrice } = this.config;
+    const schoolCount = Math.max(4, Math.floor(this.businesses.size * 0.05));
+    const parkCount = Math.max(5, Math.floor(this.businesses.size * 0.06));
+    const templeCount = Math.max(3, Math.floor(this.businesses.size * 0.04));
+
+    const bizInserts: Array<{ name: string; type: string; balance: number; productionRate: number; ownerId: null }> = [];
+    for (let i = 0; i < schoolCount; i++) {
+      bizInserts.push({ name: `${pick(SCHOOL_BUSINESS_NAMES)} №${i + 1}`, type: "school", balance: rand(1500, 5000), productionRate: rand(3, 8), ownerId: null });
+    }
+    for (let i = 0; i < parkCount; i++) {
+      bizInserts.push({ name: `${pick(PARK_BUSINESS_NAMES)} №${i + 1}`, type: "park", balance: rand(1000, 4000), productionRate: rand(4, 10), ownerId: null });
+    }
+    for (let i = 0; i < templeCount; i++) {
+      bizInserts.push({ name: `${pick(TEMPLE_BUSINESS_NAMES)} №${i + 1}`, type: "temple", balance: rand(500, 2000), productionRate: rand(2, 6), ownerId: null });
+    }
+
+    const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
+    for (const b of savedBiz) {
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+    }
+
+    const goodInserts = savedBiz.map(b => {
+      const typeMap: Record<string, { names: string[]; price: number }> = {
+        school: { names: SCHOOL_GOOD_NAMES, price: baseFoodPrice * 1.5 },
+        park: { names: PARK_GOOD_NAMES, price: baseFoodPrice * 1.2 },
+        temple: { names: TEMPLE_GOOD_NAMES, price: baseFoodPrice * 0.4 },
+      };
+      const cfg = typeMap[b.type] ?? { names: ["Услуга"], price: baseFoodPrice };
+      return {
+        name: pick(cfg.names),
+        businessId: b.id,
+        basePrice: cfg.price,
+        currentPrice: cfg.price * (1 + this.config.priceMarkup),
+        quality: rand(55, 90),
+        demand: rand(20, 50),
+        supply: rand(40, 80),
+      };
+    });
+
+    const savedGoods = await db.insert(goodsTable).values(goodInserts).returning();
+    for (const g of savedGoods) this.goods.set(g.id, { ...g });
+
+    logger.info({ schoolCount, parkCount, templeCount, goodsCount: savedGoods.length }, "Public services spawned");
+  }
+
   private async generatePopulation(): Promise<void> {
     const { initialAgents, initialBusinesses, baseFoodPrice, baseSalary } = this.config;
     logger.info({ initialAgents, initialBusinesses }, "Generating population");
 
-    const hospitalBusinessCount = Math.max(5, Math.floor(initialBusinesses * 0.10));
-    const farmBusinessCount = Math.max(6, Math.floor(initialBusinesses * 0.10));
-    const workshopBusinessCount = Math.max(4, Math.floor(initialBusinesses * 0.07));
-    const remaining = initialBusinesses - hospitalBusinessCount - farmBusinessCount - workshopBusinessCount;
+    const hospitalBusinessCount = Math.max(5, Math.floor(initialBusinesses * 0.08));
+    const farmBusinessCount = Math.max(6, Math.floor(initialBusinesses * 0.08));
+    const workshopBusinessCount = Math.max(4, Math.floor(initialBusinesses * 0.06));
+    const schoolBusinessCount = Math.max(4, Math.floor(initialBusinesses * 0.05));
+    const parkBusinessCount = Math.max(5, Math.floor(initialBusinesses * 0.06));
+    const templeBusinessCount = Math.max(3, Math.floor(initialBusinesses * 0.04));
+    const remaining = initialBusinesses - hospitalBusinessCount - farmBusinessCount - workshopBusinessCount - schoolBusinessCount - parkBusinessCount - templeBusinessCount;
     const foodBusinessCount = Math.floor(remaining * 0.60);
     const serviceBusinessCount = remaining - foodBusinessCount;
 
@@ -560,6 +633,15 @@ class SimulationEngine {
         productionRate: rand(2, 10),
         ownerId: null,
       });
+    }
+    for (let i = 0; i < schoolBusinessCount; i++) {
+      businessInserts.push({ name: `${pick(SCHOOL_BUSINESS_NAMES)} №${i + 1}`, type: "school", balance: rand(1500, 5000), productionRate: rand(3, 8), ownerId: null });
+    }
+    for (let i = 0; i < parkBusinessCount; i++) {
+      businessInserts.push({ name: `${pick(PARK_BUSINESS_NAMES)} №${i + 1}`, type: "park", balance: rand(1000, 4000), productionRate: rand(4, 10), ownerId: null });
+    }
+    for (let i = 0; i < templeBusinessCount; i++) {
+      businessInserts.push({ name: `${pick(TEMPLE_BUSINESS_NAMES)} №${i + 1}`, type: "temple", balance: rand(500, 2000), productionRate: rand(2, 6), ownerId: null });
     }
 
     const savedBusinesses = await db.insert(businessesTable).values(businessInserts).returning();
@@ -629,6 +711,18 @@ class SimulationEngine {
         supply: rand(30, 60),
       });
     }
+    const schoolBusinessIds = savedBusinesses.filter(b => b.type === "school").map(b => b.id);
+    const parkBusinessIds = savedBusinesses.filter(b => b.type === "park").map(b => b.id);
+    const templeBusinessIds = savedBusinesses.filter(b => b.type === "temple").map(b => b.id);
+    for (const bId of schoolBusinessIds) {
+      goodInserts.push({ name: pick(SCHOOL_GOOD_NAMES), businessId: bId, basePrice: baseFoodPrice * 1.5, currentPrice: baseFoodPrice * 1.5 * (1 + this.config.priceMarkup), quality: rand(55, 90), demand: rand(20, 50), supply: rand(40, 80) });
+    }
+    for (const bId of parkBusinessIds) {
+      goodInserts.push({ name: pick(PARK_GOOD_NAMES), businessId: bId, basePrice: baseFoodPrice * 1.2, currentPrice: baseFoodPrice * 1.2 * (1 + this.config.priceMarkup), quality: rand(50, 85), demand: rand(25, 55), supply: rand(40, 75) });
+    }
+    for (const bId of templeBusinessIds) {
+      goodInserts.push({ name: pick(TEMPLE_GOOD_NAMES), businessId: bId, basePrice: baseFoodPrice * 0.4, currentPrice: baseFoodPrice * 0.4 * (1 + this.config.priceMarkup), quality: rand(60, 95), demand: rand(15, 40), supply: rand(50, 90) });
+    }
 
     const savedGoods = await db.insert(goodsTable).values(goodInserts).returning();
     for (const g of savedGoods) {
@@ -668,6 +762,9 @@ class SimulationEngine {
         social: rand(50, 95),
         health: rand(60, 90),
         sleep: rand(50, 90),
+        education: rand(40, 80),
+        entertainment: rand(40, 80),
+        faith: rand(30, 70),
       }));
 
       const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
@@ -679,7 +776,7 @@ class SimulationEngine {
         if (!needs) continue;
         this.agents.set(agent.id, {
           ...agent,
-          needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80 },
+          needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80, education: needs.education ?? 70, entertainment: needs.entertainment ?? 70, faith: needs.faith ?? 60 },
           needsId: needs.id,
           recentActions: [],
           jobHistory: agent.employerId ? [{ tick: 0, event: "hired", businessId: agent.employerId, businessName: this.businesses.get(agent.employerId)?.name ?? null }] : [],
@@ -835,7 +932,7 @@ class SimulationEngine {
 
     const dbgBudgetBefore = runningBudget;
     const dbgBizBalanceBefore = Array.from(this.businesses.values()).reduce((s, b) => s + b.balance, 0);
-    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0, dbgActSleep = 0, dbgActHeal = 0;
+    let dbgActWork = 0, dbgActEat = 0, dbgActRest = 0, dbgActSocialize = 0, dbgActIdle = 0, dbgActSleep = 0, dbgActHeal = 0, dbgActStudy = 0, dbgActRelax = 0, dbgActPray = 0;
     let dbgMoneyIn = 0, dbgMoneyOut = 0, dbgWagesPaid = 0;
     let dbgSuccessful = 0, dbgFailedNoGoods = 0, dbgFailedNoMoney = 0;
     let dbgPensionRecipients = 0, dbgSubsidyRecipients = 0;
@@ -926,6 +1023,10 @@ class SimulationEngine {
       agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
       agent.needs.social = clamp(agent.needs.social - needDecayRate * rand(0.4, 1.2));
       agent.needs.sleep = clamp(agent.needs.sleep - 2.5 * rand(0.8, 1.2));
+      // New needs — decay slower (every other tick effectively via rand)
+      agent.needs.education = clamp(agent.needs.education - needDecayRate * rand(0.1, 0.4));
+      agent.needs.entertainment = clamp(agent.needs.entertainment - needDecayRate * rand(0.15, 0.5));
+      agent.needs.faith = clamp(agent.needs.faith - needDecayRate * rand(0.05, 0.25));
 
       // Health dynamics
       let healthDelta = 0;
@@ -1021,12 +1122,70 @@ class SimulationEngine {
             partner.needs.social = clamp(partner.needs.social + rand(10, 30));
             agent.mood = clamp(agent.mood + interaction * socialInteractionStrength);
             partner.mood = clamp(partner.mood + interaction * socialInteractionStrength * 0.5);
-            // Update friendship levels based on quality of interaction
             this.updateRelation(agentId, partnerId, interaction * 5);
             this.updateRelation(partnerId, agentId, interaction * 2.5);
           }
         }
         agent.currentAction = "socialize";
+      } else if (criticalNeed === "education") {
+        const schoolGood = this.pickAvailableGood("school");
+        if (schoolGood && agent.money >= schoolGood.currentPrice) {
+          agent.money -= schoolGood.currentPrice;
+          agent.needs.education = clamp(agent.needs.education + rand(25, 45));
+          agent.needs.comfort = clamp(agent.needs.comfort + rand(3, 8));
+          agent.currentAction = "study";
+          schoolGood.demand = clamp(schoolGood.demand + 1, 0, 200);
+          schoolGood.supply = clamp(schoolGood.supply - 1, 0, 200);
+          const biz = schoolGood.businessId ? this.businesses.get(schoolGood.businessId) : null;
+          if (biz) biz.balance += schoolGood.currentPrice;
+          gdp += schoolGood.currentPrice;
+          dbgMoneyOut += schoolGood.currentPrice;
+          dbgSuccessful++;
+        } else {
+          // Can't afford or no school — self-study at home
+          agent.needs.education = clamp(agent.needs.education + rand(8, 15));
+          agent.currentAction = "study";
+        }
+      } else if (criticalNeed === "entertainment") {
+        const parkGood = this.pickAvailableGood("park");
+        if (parkGood && agent.money >= parkGood.currentPrice) {
+          agent.money -= parkGood.currentPrice;
+          agent.needs.entertainment = clamp(agent.needs.entertainment + rand(25, 45));
+          agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
+          agent.mood = clamp(agent.mood + rand(1, 4));
+          agent.currentAction = "relax";
+          parkGood.demand = clamp(parkGood.demand + 1, 0, 200);
+          parkGood.supply = clamp(parkGood.supply - 1, 0, 200);
+          const biz = parkGood.businessId ? this.businesses.get(parkGood.businessId) : null;
+          if (biz) biz.balance += parkGood.currentPrice;
+          gdp += parkGood.currentPrice;
+          dbgMoneyOut += parkGood.currentPrice;
+          dbgSuccessful++;
+        } else {
+          // No park / no money — free leisure at home
+          agent.needs.entertainment = clamp(agent.needs.entertainment + rand(10, 18));
+          agent.currentAction = "relax";
+        }
+      } else if (criticalNeed === "faith") {
+        const templeGood = this.pickAvailableGood("temple");
+        if (templeGood && agent.money >= templeGood.currentPrice) {
+          agent.money -= templeGood.currentPrice;
+          agent.needs.faith = clamp(agent.needs.faith + rand(25, 50));
+          agent.needs.social = clamp(agent.needs.social + rand(5, 12));
+          agent.mood = clamp(agent.mood + rand(0.5, 2));
+          agent.currentAction = "pray";
+          templeGood.demand = clamp(templeGood.demand + 1, 0, 200);
+          templeGood.supply = clamp(templeGood.supply - 1, 0, 200);
+          const biz = templeGood.businessId ? this.businesses.get(templeGood.businessId) : null;
+          if (biz) biz.balance += templeGood.currentPrice;
+          gdp += templeGood.currentPrice;
+          dbgMoneyOut += templeGood.currentPrice;
+          dbgSuccessful++;
+        } else {
+          // Pray at home for free
+          agent.needs.faith = clamp(agent.needs.faith + rand(12, 22));
+          agent.currentAction = "pray";
+        }
       } else {
         if (agent.employerId) {
           const salary = baseSalary * rand(0.8, 1.2);
@@ -1052,7 +1211,10 @@ class SimulationEngine {
           (agent.needs.comfort - 50) * 0.01 +
           (agent.needs.social - 50) * 0.005 +
           (agent.needs.health - 50) * 0.008 +
-          (agent.needs.sleep - 50) * 0.005
+          (agent.needs.sleep - 50) * 0.005 +
+          (agent.needs.education - 50) * 0.003 +
+          (agent.needs.entertainment - 50) * 0.004 +
+          (agent.needs.faith - 50) * 0.002
       );
 
       // Subsidy: once per game day only, capped at subsidyAmount per day
@@ -1301,6 +1463,9 @@ class SimulationEngine {
       social: rand(60, 90),
       health: rand(65, 90),
       sleep: rand(55, 90),
+      education: rand(50, 80),
+      entertainment: rand(50, 80),
+      faith: rand(40, 70),
     }));
     const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
     const needsMap = new Map<number, typeof savedNeeds[0]>();
@@ -1311,7 +1476,7 @@ class SimulationEngine {
       if (!needs) continue;
       this.agents.set(agent.id, {
         ...agent,
-        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80 },
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 80, education: needs.education ?? 70, entertainment: needs.entertainment ?? 70, faith: needs.faith ?? 60 },
         needsId: needs.id,
         recentActions: [],
         jobHistory: agent.employerId
@@ -1325,21 +1490,31 @@ class SimulationEngine {
     }
   }
 
-  private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number }): string {
-    // Priority order: health < 20 → must rest; sleep < 25 → sleep; hunger < 30; comfort < 30; social < 30
+  private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number }): string {
+    // Priority order: health < 20 → heal; sleep < 25 → sleep; hunger < 30; then lowest of secondary needs
     if (needs.health < 20) return "health";
     if (needs.sleep < 25) return "sleep";
-    const threshold = 30;
-    if (needs.hunger < threshold && needs.hunger <= needs.comfort && needs.hunger <= needs.social) return "hunger";
-    if (needs.comfort < threshold && needs.comfort <= needs.social) return "comfort";
-    if (needs.social < threshold) return "social";
+    if (needs.hunger < 30) return "hunger";
+    // Secondary needs — any below 25 triggers action
+    const secondary: Array<[string, number]> = [
+      ["comfort", needs.comfort],
+      ["social", needs.social],
+      ["education", needs.education],
+      ["entertainment", needs.entertainment],
+      ["faith", needs.faith],
+    ];
+    const critical = secondary.filter(([, v]) => v < 25);
+    if (critical.length > 0) {
+      critical.sort((a, b) => a[1] - b[1]);
+      return critical[0][0];
+    }
     return "work";
   }
 
-  private pickAvailableGood(type: "food" | "service" | "hospital"): GoodState | null {
+  private pickAvailableGood(type: "food" | "service" | "hospital" | "school" | "park" | "temple"): GoodState | null {
     const relevant = Array.from(this.goods.values()).filter(g => {
       const biz = g.businessId ? this.businesses.get(g.businessId) : null;
-      return biz && biz.type === type;
+      return biz && biz.type === type && g.supply > 0;
     });
     if (relevant.length === 0) return null;
     return pick(relevant);
