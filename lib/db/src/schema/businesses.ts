@@ -9,6 +9,7 @@ export const businessesTable = pgTable("businesses", {
   balance: real("balance").notNull().default(1000),
   productionRate: real("production_rate").notNull().default(10),
   ownerId: integer("owner_id"),
+  productivityLevel: integer("productivity_level").notNull().default(0),
 });
 
 export const goodsTable = pgTable("goods", {

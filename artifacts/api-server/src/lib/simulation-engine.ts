@@ -1076,6 +1076,25 @@ class SimulationEngine {
       : 0.003; // maintenance rate above target
     const plannedBirths = isNewDay ? Math.max(2, Math.round(this.agents.size * birthRate)) : 0;
 
+    // ── Daily productivity investments ─────────────────────────────────────────
+    // Profitable commercial businesses (food/service/retail) auto-invest when
+    // balance exceeds threshold: costs 5000 coins per level gained, cap at 20.
+    if (isNewDay) {
+      const INVEST_COST = 5000;
+      const INVEST_TYPES = new Set(["food", "service", "retail"]);
+      for (const biz of this.businesses.values()) {
+        if (!INVEST_TYPES.has(biz.type)) continue;
+        if (biz.balance <= 0) continue;
+        const currentLevel = biz.productivityLevel ?? 0;
+        if (currentLevel >= 20) continue;
+        const threshold = INVEST_COST * (currentLevel + 1) * 1.5;
+        if (biz.balance >= threshold) {
+          biz.balance -= INVEST_COST;
+          biz.productivityLevel = currentLevel + 1;
+        }
+      }
+    }
+
     let gdp = 0;
     let taxRevenue = 0;
     let subsidiesPaid = 0;
@@ -2225,8 +2244,13 @@ class SimulationEngine {
         good.supply = clamp(good.supply + rand(4, 8), 0, 200);
         good.demand = clamp(good.demand - rand(1, 3), 0, 200);
       } else {
-        // Consumer goods (food/service): moderate replenishment
-        good.supply = clamp(good.supply + rand(1, 4), 0, 200);
+        // Consumer goods (food/service/retail): moderate replenishment
+        // Productivity bonus: each invested level adds 0.1 × employeeCount extra supply
+        const ownerBiz = good.businessId != null ? this.businesses.get(good.businessId) : null;
+        const prodLevel = ownerBiz?.productivityLevel ?? 0;
+        const empCount = ownerBiz?.employeeCount ?? 0;
+        const prodBonus = Math.floor(prodLevel * 0.1 * empCount);
+        good.supply = clamp(good.supply + rand(1, 4) + prodBonus, 0, 200);
         good.demand = clamp(good.demand - rand(1, 3), 0, 200);
       }
     }
@@ -2277,7 +2301,7 @@ class SimulationEngine {
     const bizArray = Array.from(this.businesses.values());
     for (const biz of bizArray) {
       await db.update(businessesTable)
-        .set({ balance: biz.balance })
+        .set({ balance: biz.balance, productivityLevel: biz.productivityLevel ?? 0 })
         .where(eq(businessesTable.id, biz.id));
     }
 
@@ -2600,6 +2624,7 @@ class SimulationEngine {
       ownerId: b.ownerId,
       firedThisTick: b.firedThisTick,
       hiredThisTick: b.hiredThisTick,
+      productivityLevel: b.productivityLevel ?? 0,
     }));
   }
 

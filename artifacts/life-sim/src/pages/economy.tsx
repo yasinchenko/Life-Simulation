@@ -570,6 +570,7 @@ function BizTable({ businesses, loading }: { businesses: BizItem[]; loading: boo
             <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">Баланс</th>
             <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">Сотрудники</th>
             <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">Нанято/Уволено</th>
+            <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">Продуктивность</th>
             <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">Производство/тик</th>
           </tr>
         </thead>
@@ -577,7 +578,7 @@ function BizTable({ businesses, loading }: { businesses: BizItem[]; loading: boo
           {loading ? (
             Array.from({ length: 8 }).map((_, i) => (
               <tr key={i} className="border-b border-border/50">
-                {Array.from({ length: 6 }).map((_, j) => (
+                {Array.from({ length: 7 }).map((_, j) => (
                   <td key={j} className="px-3 py-2"><div className="h-3 bg-muted rounded animate-pulse" /></td>
                 ))}
               </tr>
@@ -620,6 +621,15 @@ function BizTable({ businesses, loading }: { businesses: BizItem[]; loading: boo
                       <span className="text-muted-foreground/40">—</span>
                     )}
                   </span>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {biz.productivityLevel > 0 ? (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[hsl(45,93%,47%)]/10 text-[hsl(45,93%,47%)] border border-[hsl(45,93%,47%)]/20">
+                      Lv.{biz.productivityLevel}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground/40">—</span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{biz.productionRate.toFixed(1)}</td>
               </tr>
