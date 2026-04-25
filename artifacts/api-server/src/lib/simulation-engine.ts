@@ -1272,7 +1272,7 @@ class SimulationEngine {
           dbgWagesPaid += salary;
           agent.needs.financialSafety = clamp(agent.needs.financialSafety + rand(8, 15));
         } else {
-          // Unemployed: urgently seek a job; receive emergency subsidy from government
+          // Unemployed: urgently seek a job — no special subsidy, standard support applies separately
           const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
           if (availBiz.length > 0) {
             const newBiz = pick(availBiz);
@@ -1284,13 +1284,6 @@ class SimulationEngine {
             agent.needs.financialSafety = clamp(agent.needs.financialSafety + rand(5, 10));
           } else {
             agent.currentAction = "idle";
-            // Emergency subsidy
-            if (runningBudget >= subsidyAmount * 1.5) {
-              agent.money += subsidyAmount * 1.5;
-              subsidiesPaid += subsidyAmount * 1.5;
-              runningBudget -= subsidyAmount * 1.5;
-              agent.needs.financialSafety = clamp(agent.needs.financialSafety + rand(4, 8));
-            }
           }
         }
       } else if (criticalNeed === "housingSafety") {
@@ -1311,7 +1304,7 @@ class SimulationEngine {
           dbgWagesPaid += salary;
           agent.needs.housingSafety = clamp(agent.needs.housingSafety + rand(6, 12));
         } else {
-          // Homeless: desperately seek employment
+          // No housing: desperately seek employment — no special subsidy, standard support applies separately
           const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
           if (availBiz.length > 0) {
             const newBiz = pick(availBiz);
@@ -1323,14 +1316,6 @@ class SimulationEngine {
             agent.needs.housingSafety = clamp(agent.needs.housingSafety + rand(5, 10));
           } else {
             agent.currentAction = "idle";
-            // Government provides temporary shelter subsidy
-            if (runningBudget >= subsidyAmount) {
-              agent.money += subsidyAmount;
-              subsidiesPaid += subsidyAmount;
-              runningBudget -= subsidyAmount;
-              agent.needs.housingSafety = clamp(agent.needs.housingSafety + rand(3, 6));
-              dbgSubsidyRecipients++;
-            }
           }
         }
       } else {
