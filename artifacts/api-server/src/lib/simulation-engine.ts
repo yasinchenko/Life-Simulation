@@ -92,12 +92,16 @@ const FEMALE_NAMES = [
   "Виктория", "Людмила", "Нина", "Алёна", "Марина", "Вера",
 ];
 const PERSONALITIES = ["активный", "спокойный", "общительный", "замкнутый", "трудолюбивый", "ленивый", "амбициозный"];
-const FOOD_BUSINESS_NAMES = ["Пекарня", "Кафе", "Столовая", "Ресторан", "Фермерское хозяйство", "Супермаркет", "Закусочная"];
-const SERVICE_BUSINESS_NAMES = ["Парикмахерская", "Мастерская", "Магазин", "Сервисный центр", "Прачечная", "Ателье", "Аптека"];
+const FOOD_BUSINESS_NAMES = ["Пекарня", "Кафе", "Столовая", "Ресторан", "Супермаркет", "Закусочная", "Продуктовый"];
+const SERVICE_BUSINESS_NAMES = ["Парикмахерская", "Магазин", "Сервисный центр", "Прачечная", "Ателье", "Аптека", "Химчистка"];
 const HOSPITAL_BUSINESS_NAMES = ["Городская больница", "Поликлиника", "Медицинский центр", "Амбулатория", "Клиника здоровья", "Медпункт"];
+const FARM_BUSINESS_NAMES = ["Агроферма", "Молочная ферма", "Птицефабрика", "Зерновое хозяйство", "Овощная ферма", "Животноводческий комплекс", "Тепличный комбинат"];
+const WORKSHOP_BUSINESS_NAMES = ["Производственный цех", "Фабрика материалов", "Завод комплектующих", "Цех упаковки", "Текстильная фабрика", "Химический завод"];
 const FOOD_GOOD_NAMES = ["Хлеб", "Молоко", "Мясо", "Овощи", "Фрукты", "Рыба", "Крупа"];
 const SERVICE_GOOD_NAMES = ["Одежда", "Инструменты", "Бытовая химия", "Электроника", "Мебель"];
 const HOSPITAL_GOOD_NAMES = ["Лечение", "Медосмотр", "Операция", "Консультация врача", "Физиотерапия"];
+const RAW_FOOD_GOOD_NAMES = ["Зерно", "Сырое молоко", "Овощи с поля", "Яйца", "Мясо сырое", "Мука", "Корм"];
+const RAW_MATERIAL_GOOD_NAMES = ["Детали", "Запчасти", "Сырьё", "Химикаты", "Ткань", "Металл"];
 const ACTIONS = ["eat", "rest", "sleep", "socialize", "work", "idle", "heal"];
 
 function rand(min: number, max: number): number {
@@ -176,6 +180,14 @@ export interface TickDebugReport {
     governmentBudget: number;
     orphanedGoods: number;
   };
+  chain: {
+    b2bSuccess: number;
+    b2bFail: number;
+    farmSupplyTotal: number;
+    workshopSupplyTotal: number;
+    foodSupplyTotal: number;
+    serviceSupplyTotal: number;
+  };
 }
 
 class SimulationEngine {
@@ -225,6 +237,7 @@ class SimulationEngine {
       await this.start();
     } else {
       await this.ensureHospitals();
+      await this.ensureFarms();
       if (this.state.running) {
         logger.info("Resuming simulation from saved state");
         this.startTimer();
@@ -433,15 +446,93 @@ class SimulationEngine {
     logger.info({ hospitalCount, goodsCount: savedGoods.length }, "Hospitals spawned successfully");
   }
 
+  private async ensureFarms(): Promise<void> {
+    const existingFarms = Array.from(this.businesses.values()).filter(b => b.type === "farm");
+    const existingWorkshops = Array.from(this.businesses.values()).filter(b => b.type === "workshop");
+    if (existingFarms.length > 0 && existingWorkshops.length > 0) {
+      logger.info({ farmCount: existingFarms.length, workshopCount: existingWorkshops.length }, "Raw producers already present, skipping");
+      return;
+    }
+
+    const { baseFoodPrice } = this.config;
+    const farmCount = Math.max(6, Math.floor(this.businesses.size * 0.08));
+    const workshopCount = Math.max(4, Math.floor(this.businesses.size * 0.06));
+    logger.info({ farmCount, workshopCount }, "Spawning raw producers for production chains");
+
+    const bizInserts = [];
+    for (let i = 0; i < farmCount; i++) {
+      bizInserts.push({
+        name: `${pick(FARM_BUSINESS_NAMES)} №${i + 1}`,
+        type: "farm",
+        balance: rand(3000, 9000),
+        productionRate: rand(8, 20),
+        ownerId: null,
+      });
+    }
+    for (let i = 0; i < workshopCount; i++) {
+      bizInserts.push({
+        name: `${pick(WORKSHOP_BUSINESS_NAMES)} №${i + 1}`,
+        type: "workshop",
+        balance: rand(2000, 7000),
+        productionRate: rand(6, 15),
+        ownerId: null,
+      });
+    }
+
+    const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
+    for (const b of savedBiz) {
+      this.businesses.set(b.id, { ...b, employeeCount: 0, firedThisTick: 0, hiredThisTick: 0 });
+    }
+
+    const goodInserts = savedBiz.map(b => {
+      const isF = b.type === "farm";
+      return {
+        name: isF ? pick(RAW_FOOD_GOOD_NAMES) : pick(RAW_MATERIAL_GOOD_NAMES),
+        businessId: b.id,
+        basePrice: baseFoodPrice * (isF ? 0.5 : 0.8),
+        currentPrice: baseFoodPrice * (isF ? 0.5 : 0.8),
+        quality: rand(isF ? 60 : 50, 90),
+        demand: rand(30, 60),
+        supply: rand(60, 100),
+      };
+    });
+
+    const savedGoods = await db.insert(goodsTable).values(goodInserts).returning();
+    for (const g of savedGoods) this.goods.set(g.id, { ...g });
+
+    logger.info({ farmCount, workshopCount, goodsCount: savedGoods.length }, "Raw producers spawned for production chains");
+  }
+
   private async generatePopulation(): Promise<void> {
     const { initialAgents, initialBusinesses, baseFoodPrice, baseSalary } = this.config;
     logger.info({ initialAgents, initialBusinesses }, "Generating population");
 
-    const hospitalBusinessCount = Math.max(5, Math.floor(initialBusinesses * 0.12));
-    const foodBusinessCount = Math.floor((initialBusinesses - hospitalBusinessCount) * 0.62);
-    const serviceBusinessCount = initialBusinesses - hospitalBusinessCount - foodBusinessCount;
+    const hospitalBusinessCount = Math.max(5, Math.floor(initialBusinesses * 0.10));
+    const farmBusinessCount = Math.max(6, Math.floor(initialBusinesses * 0.10));
+    const workshopBusinessCount = Math.max(4, Math.floor(initialBusinesses * 0.07));
+    const remaining = initialBusinesses - hospitalBusinessCount - farmBusinessCount - workshopBusinessCount;
+    const foodBusinessCount = Math.floor(remaining * 0.60);
+    const serviceBusinessCount = remaining - foodBusinessCount;
 
     const businessInserts = [];
+    for (let i = 0; i < farmBusinessCount; i++) {
+      businessInserts.push({
+        name: `${pick(FARM_BUSINESS_NAMES)} №${i + 1}`,
+        type: "farm",
+        balance: rand(3000, 9000),
+        productionRate: rand(8, 20),
+        ownerId: null,
+      });
+    }
+    for (let i = 0; i < workshopBusinessCount; i++) {
+      businessInserts.push({
+        name: `${pick(WORKSHOP_BUSINESS_NAMES)} №${i + 1}`,
+        type: "workshop",
+        balance: rand(2000, 7000),
+        productionRate: rand(6, 15),
+        ownerId: null,
+      });
+    }
     for (let i = 0; i < foodBusinessCount; i++) {
       businessInserts.push({
         name: `${pick(FOOD_BUSINESS_NAMES)} №${i + 1}`,
@@ -478,12 +569,35 @@ class SimulationEngine {
     const foodBusinessIds = savedBusinesses.filter(b => b.type === "food").map(b => b.id);
     const serviceBusinessIds = savedBusinesses.filter(b => b.type === "service").map(b => b.id);
     const hospitalBusinessIds = savedBusinesses.filter(b => b.type === "hospital").map(b => b.id);
+    const farmBusinessIds = savedBusinesses.filter(b => b.type === "farm").map(b => b.id);
+    const workshopBusinessIds = savedBusinesses.filter(b => b.type === "workshop").map(b => b.id);
 
     const goodInserts = [];
-    for (const bId of foodBusinessIds) {
-      const goodName = pick(FOOD_GOOD_NAMES);
+    for (const bId of farmBusinessIds) {
       goodInserts.push({
-        name: goodName,
+        name: pick(RAW_FOOD_GOOD_NAMES),
+        businessId: bId,
+        basePrice: baseFoodPrice * 0.5,
+        currentPrice: baseFoodPrice * 0.5,
+        quality: rand(60, 90),
+        demand: rand(30, 60),
+        supply: rand(60, 100),
+      });
+    }
+    for (const bId of workshopBusinessIds) {
+      goodInserts.push({
+        name: pick(RAW_MATERIAL_GOOD_NAMES),
+        businessId: bId,
+        basePrice: baseFoodPrice * 0.8,
+        currentPrice: baseFoodPrice * 0.8,
+        quality: rand(50, 85),
+        demand: rand(25, 55),
+        supply: rand(50, 90),
+      });
+    }
+    for (const bId of foodBusinessIds) {
+      goodInserts.push({
+        name: pick(FOOD_GOOD_NAMES),
         businessId: bId,
         basePrice: baseFoodPrice,
         currentPrice: baseFoodPrice * (1 + this.config.priceMarkup),
@@ -493,9 +607,8 @@ class SimulationEngine {
       });
     }
     for (const bId of serviceBusinessIds) {
-      const goodName = pick(SERVICE_GOOD_NAMES);
       goodInserts.push({
-        name: goodName,
+        name: pick(SERVICE_GOOD_NAMES),
         businessId: bId,
         basePrice: baseFoodPrice * 2,
         currentPrice: baseFoodPrice * 2 * (1 + this.config.priceMarkup),
@@ -505,9 +618,8 @@ class SimulationEngine {
       });
     }
     for (const bId of hospitalBusinessIds) {
-      const goodName = pick(HOSPITAL_GOOD_NAMES);
       goodInserts.push({
-        name: goodName,
+        name: pick(HOSPITAL_GOOD_NAMES),
         businessId: bId,
         basePrice: baseFoodPrice * 3,
         currentPrice: baseFoodPrice * 3 * (1 + this.config.priceMarkup),
@@ -999,6 +1111,7 @@ class SimulationEngine {
     }
 
     const prevGoodPrices = new Map(Array.from(this.goods.entries()).map(([id, g]) => [id, g.currentPrice]));
+    const chainResult = this.processProductionChains();
     this.updateGoodPrices();
     this.updateBusinesses();
 
@@ -1080,6 +1193,26 @@ class SimulationEngine {
           totalMoneyBusinesses: Math.round(totalMoneyBusinesses),
           governmentBudget: Math.round(this.state.governmentBudget),
           orphanedGoods,
+        },
+        chain: {
+          b2bSuccess: chainResult.b2bSuccess,
+          b2bFail: chainResult.b2bFail,
+          farmSupplyTotal: Math.round(goodsArr.filter(g => {
+            const biz = g.businessId != null ? this.businesses.get(g.businessId) : null;
+            return biz?.type === "farm";
+          }).reduce((s, g) => s + g.supply, 0)),
+          workshopSupplyTotal: Math.round(goodsArr.filter(g => {
+            const biz = g.businessId != null ? this.businesses.get(g.businessId) : null;
+            return biz?.type === "workshop";
+          }).reduce((s, g) => s + g.supply, 0)),
+          foodSupplyTotal: Math.round(goodsArr.filter(g => {
+            const biz = g.businessId != null ? this.businesses.get(g.businessId) : null;
+            return biz?.type === "food";
+          }).reduce((s, g) => s + g.supply, 0)),
+          serviceSupplyTotal: Math.round(goodsArr.filter(g => {
+            const biz = g.businessId != null ? this.businesses.get(g.businessId) : null;
+            return biz?.type === "service";
+          }).reduce((s, g) => s + g.supply, 0)),
         },
       };
     }
@@ -1207,16 +1340,106 @@ class SimulationEngine {
     this.dirtyRelations.add(`${agentIdA}:${agentIdB}`);
   }
 
+  private processProductionChains(): { b2bSuccess: number; b2bFail: number } {
+    let b2bSuccess = 0, b2bFail = 0;
+
+    const farmGoods = Array.from(this.goods.values()).filter(g => {
+      const biz = g.businessId != null ? this.businesses.get(g.businessId) : null;
+      return biz?.type === "farm";
+    });
+    const workshopGoods = Array.from(this.goods.values()).filter(g => {
+      const biz = g.businessId != null ? this.businesses.get(g.businessId) : null;
+      return biz?.type === "workshop";
+    });
+
+    // Food businesses buy raw ingredients from farms
+    for (const biz of this.businesses.values()) {
+      if (biz.type !== "food") continue;
+      const farmGood = farmGoods.find(g => g.supply > 20) ?? null;
+      const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
+
+      if (farmGood && biz.balance >= farmGood.currentPrice) {
+        const cost = farmGood.currentPrice;
+        biz.balance -= cost;
+        const farmBiz = farmGood.businessId != null ? this.businesses.get(farmGood.businessId) : null;
+        if (farmBiz) farmBiz.balance += cost;
+        farmGood.supply = clamp(farmGood.supply - 8, 0, 200);
+        farmGood.demand = clamp(farmGood.demand + 1.5, 0, 200);
+        if (consumerGood) {
+          consumerGood.supply = clamp(consumerGood.supply + 7, 0, 200);
+          consumerGood.quality = clamp(consumerGood.quality + 0.3, 0, 100);
+        }
+        b2bSuccess++;
+      } else {
+        if (consumerGood) {
+          consumerGood.supply = clamp(consumerGood.supply - 2, 0, 200);
+          consumerGood.quality = clamp(consumerGood.quality - 0.4, 0, 100);
+        }
+        b2bFail++;
+      }
+    }
+
+    // Service businesses buy raw materials from workshops
+    for (const biz of this.businesses.values()) {
+      if (biz.type !== "service") continue;
+      const wsGood = workshopGoods.find(g => g.supply > 15) ?? null;
+      const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
+
+      if (wsGood && biz.balance >= wsGood.currentPrice) {
+        const cost = wsGood.currentPrice;
+        biz.balance -= cost;
+        const wsBiz = wsGood.businessId != null ? this.businesses.get(wsGood.businessId) : null;
+        if (wsBiz) wsBiz.balance += cost;
+        wsGood.supply = clamp(wsGood.supply - 6, 0, 200);
+        wsGood.demand = clamp(wsGood.demand + 1, 0, 200);
+        if (consumerGood) {
+          consumerGood.supply = clamp(consumerGood.supply + 5, 0, 200);
+          consumerGood.quality = clamp(consumerGood.quality + 0.2, 0, 100);
+        }
+        b2bSuccess++;
+      } else {
+        if (consumerGood) {
+          consumerGood.supply = clamp(consumerGood.supply - 1, 0, 200);
+          consumerGood.quality = clamp(consumerGood.quality - 0.2, 0, 100);
+        }
+        b2bFail++;
+      }
+    }
+
+    return { b2bSuccess, b2bFail };
+  }
+
   private updateGoodPrices(): void {
     for (const good of this.goods.values()) {
       const demandFactor = (good.demand - 50) / 100;
       const { baseFoodPrice, priceMarkup } = this.config;
-      const bizType = good.businessId ? this.businesses.get(good.businessId)?.type : undefined;
-      const priceMultiplier = bizType === "food" ? 1 : bizType === "hospital" ? 3 : 2;
+      const bizType = good.businessId != null ? this.businesses.get(good.businessId)?.type : undefined;
+
+      const priceMultiplier =
+        bizType === "food" ? 1 :
+        bizType === "hospital" ? 3 :
+        bizType === "farm" ? 0.5 :
+        bizType === "workshop" ? 0.8 :
+        2; // service
       const base = baseFoodPrice * priceMultiplier;
-      good.currentPrice = Math.max(1, base * (1 + priceMarkup) + base * demandFactor);
-      good.demand = clamp(good.demand - rand(0, 2), 0, 200);
-      good.supply = clamp(good.supply + rand(0, 3), 0, 200);
+      // Quality premium: ±10% based on quality deviation from 50
+      const qualityPremium = (good.quality - 50) / 500;
+      good.currentPrice = Math.max(1, base * (1 + priceMarkup) * (1 + qualityPremium) + base * demandFactor);
+
+      // Supply dynamics differ by business tier
+      if (bizType === "farm") {
+        // Farms grow supply naturally (crops)
+        good.supply = clamp(good.supply + rand(3, 8), 0, 200);
+        good.demand = clamp(good.demand - rand(0, 1), 0, 200);
+      } else if (bizType === "workshop") {
+        // Workshops produce at moderate pace
+        good.supply = clamp(good.supply + rand(2, 6), 0, 200);
+        good.demand = clamp(good.demand - rand(0, 1), 0, 200);
+      } else {
+        // Consumer goods: chain provides main supply boost; natural slow growth
+        good.supply = clamp(good.supply + rand(0, 2), 0, 200);
+        good.demand = clamp(good.demand - rand(0, 2), 0, 200);
+      }
     }
   }
 

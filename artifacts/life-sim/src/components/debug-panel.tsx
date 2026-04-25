@@ -53,6 +53,14 @@ interface TickDebugReport {
     governmentBudget: number;
     orphanedGoods: number;
   };
+  chain?: {
+    b2bSuccess: number;
+    b2bFail: number;
+    farmSupplyTotal: number;
+    workshopSupplyTotal: number;
+    foodSupplyTotal: number;
+    serviceSupplyTotal: number;
+  };
 }
 
 function fmt(n: number, prefix = ""): string {
@@ -234,6 +242,26 @@ export default function DebugPanel({ running }: { running: boolean }) {
                   accent="amber"
                 />
               </Section>
+
+              {d.chain && (
+                <Section title="Цепочки производства" color="amber">
+                  {(() => {
+                    const total = d.chain.b2bSuccess + d.chain.b2bFail;
+                    const effPct = total > 0 ? Math.round((d.chain.b2bSuccess / total) * 100) : 0;
+                    return (
+                      <>
+                        <Row label="B2B успешных" value={d.chain.b2bSuccess} accent="teal" />
+                        <Row label="B2B неудачных" value={d.chain.b2bFail} accent={d.chain.b2bFail > d.chain.b2bSuccess ? "crimson" : "neutral"} />
+                        <Row label="эффективность" value={`${effPct}%`} accent={effPct >= 70 ? "teal" : effPct >= 40 ? "amber" : "crimson"} />
+                        <Row label="запас ферм" value={d.chain.farmSupplyTotal} dimLabel />
+                        <Row label="запас мастерских" value={d.chain.workshopSupplyTotal} dimLabel />
+                        <Row label="запас продуктов" value={d.chain.foodSupplyTotal} dimLabel />
+                        <Row label="запас услуг" value={d.chain.serviceSupplyTotal} dimLabel />
+                      </>
+                    );
+                  })()}
+                </Section>
+              )}
 
             </div>
           )}

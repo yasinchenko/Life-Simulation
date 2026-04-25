@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import {
   useListBusinesses,
   getListBusinessesQueryKey,
@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import {
   Building2, Package, TrendingDown, UserMinus, UserPlus,
-  BarChart2, Table2, ChevronUp, ChevronDown,
+  BarChart2, Table2, ChevronUp, ChevronDown, ArrowRight, Tractor, Wrench, Utensils, Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,11 +22,19 @@ type BizGroupBy = "type" | "status" | "size";
 type BizSortCol = "label" | "count" | "profitablePct" | "avgBalance" | "totalEmployees" | "avgProduction";
 type GoodSortCol = "name" | "ratio" | "priceDiff" | "demand" | "supply" | "currentPrice";
 
-const TYPE_LABELS: Record<string, string> = { food: "Еда", service: "Сервис", hospital: "Больница" };
+const TYPE_LABELS: Record<string, string> = {
+  food: "Еда",
+  service: "Сервис",
+  hospital: "Больница",
+  farm: "Ферма",
+  workshop: "Мастерская",
+};
 const TYPE_COLORS: Record<string, string> = {
   food: "text-[hsl(43,100%,50%)]",
   service: "text-[hsl(173,80%,40%)]",
   hospital: "text-[hsl(0,80%,60%)]",
+  farm: "text-[hsl(84,70%,45%)]",
+  workshop: "text-[hsl(200,80%,50%)]",
 };
 
 const BIZ_GROUP_OPTIONS: { key: BizGroupBy; label: string }[] = [
@@ -394,6 +402,113 @@ export default function EconomyPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Production chain visualization */}
+          {(() => {
+            const bizArr = businesses ?? [];
+            const farms     = bizArr.filter(b => b.type === "farm");
+            const workshops = bizArr.filter(b => b.type === "workshop");
+            const foods     = bizArr.filter(b => b.type === "food");
+            const services  = bizArr.filter(b => b.type === "service");
+            if (farms.length === 0 && workshops.length === 0) return null;
+
+            const avgBal = (arr: BizItem[]) =>
+              arr.length > 0 ? Math.round(arr.reduce((s, b) => s + b.balance, 0) / arr.length) : 0;
+            const profitPct = (arr: BizItem[]) =>
+              arr.length > 0 ? Math.round((arr.filter(b => b.balance > 0).length / arr.length) * 100) : 0;
+
+            const chains: { rawLabel: string; rawColor: string; rawIcon: React.ReactNode; consLabel: string; consColor: string; consIcon: React.ReactNode; rawBiz: BizItem[]; consBiz: BizItem[] }[] = [
+              {
+                rawLabel: "Фермы",     rawColor: "hsl(84,70%,45%)",    rawIcon: <Tractor className="w-3.5 h-3.5" />,
+                consLabel: "Продукты", consColor: "hsl(43,100%,50%)",  consIcon: <Utensils className="w-3.5 h-3.5" />,
+                rawBiz: farms, consBiz: foods,
+              },
+              {
+                rawLabel: "Мастерские", rawColor: "hsl(200,80%,50%)",   rawIcon: <Wrench className="w-3.5 h-3.5" />,
+                consLabel: "Сервис",    consColor: "hsl(173,80%,40%)",  consIcon: <Hammer className="w-3.5 h-3.5" />,
+                rawBiz: workshops, consBiz: services,
+              },
+            ];
+
+            return (
+              <div className="bg-card border border-card-border rounded overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">Производственные цепочки</span>
+                </div>
+                <div className="p-4 space-y-6">
+                  {chains.map(chain => {
+                    const rawAvg  = avgBal(chain.rawBiz);
+                    const consAvg = avgBal(chain.consBiz);
+                    const rawProfit  = profitPct(chain.rawBiz);
+                    const consProfit = profitPct(chain.consBiz);
+                    return (
+                      <div key={chain.rawLabel}>
+                        <div className="flex items-stretch gap-0">
+                          {/* Raw producer node */}
+                          <div className="flex-1 border border-border rounded-l p-3 space-y-1.5" style={{ borderColor: chain.rawColor + "40" }}>
+                            <div className="flex items-center gap-1.5" style={{ color: chain.rawColor }}>
+                              {chain.rawIcon}
+                              <span className="text-[11px] font-semibold">{chain.rawLabel}</span>
+                              <span className="ml-auto text-[10px] font-mono text-muted-foreground">{chain.rawBiz.length} бизн.</span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              Ср. баланс: <span className={cn("font-mono font-semibold", rawAvg >= 0 ? "text-[hsl(173,80%,40%)]" : "text-[hsl(348,83%,52%)]")}>{rawAvg.toLocaleString()}</span>
+                            </div>
+                            <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${rawProfit}%`, background: chain.rawColor, opacity: 0.8 }} />
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">{rawProfit}% прибыльных</div>
+                          </div>
+
+                          {/* Arrow */}
+                          <div className="flex items-center justify-center px-2 border-t border-b border-border bg-muted/10">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <ArrowRight className="w-4 h-4 text-muted-foreground/50" />
+                              <span className="text-[8px] text-muted-foreground/40 font-mono">B2B</span>
+                            </div>
+                          </div>
+
+                          {/* Consumer node */}
+                          <div className="flex-1 border border-border p-3 space-y-1.5" style={{ borderColor: chain.consColor + "40" }}>
+                            <div className="flex items-center gap-1.5" style={{ color: chain.consColor }}>
+                              {chain.consIcon}
+                              <span className="text-[11px] font-semibold">{chain.consLabel}</span>
+                              <span className="ml-auto text-[10px] font-mono text-muted-foreground">{chain.consBiz.length} бизн.</span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              Ср. баланс: <span className={cn("font-mono font-semibold", consAvg >= 0 ? "text-[hsl(173,80%,40%)]" : "text-[hsl(348,83%,52%)]")}>{consAvg.toLocaleString()}</span>
+                            </div>
+                            <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${consProfit}%`, background: chain.consColor, opacity: 0.8 }} />
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">{consProfit}% прибыльных</div>
+                          </div>
+
+                          {/* Arrow */}
+                          <div className="flex items-center justify-center px-2 border-t border-b border-border bg-muted/10">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <ArrowRight className="w-4 h-4 text-muted-foreground/50" />
+                              <span className="text-[8px] text-muted-foreground/40 font-mono">B2C</span>
+                            </div>
+                          </div>
+
+                          {/* End consumer */}
+                          <div className="flex items-center px-4 border border-border rounded-r bg-muted/10" style={{ borderColor: "hsl(173,80%,40%)40" }}>
+                            <div className="text-center space-y-1">
+                              <div className="text-[11px] font-semibold text-[hsl(173,80%,40%)]">Агенты</div>
+                              <div className="text-[9px] text-muted-foreground font-mono">потребители</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
       )}
     </div>
