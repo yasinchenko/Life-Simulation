@@ -360,4 +360,25 @@ export const GetTopAgentsResponse = zod.object({
   "bySocialization": zod.array(agentShape),
 })
 
+const needStatShape = zod.object({
+  avg: zod.number(),
+  criticalPct: zod.number(),
+  lowPct: zod.number(),
+});
+
+export const GetNeedsStatsResponse = zod.object({
+  hunger: needStatShape,
+  comfort: needStatShape,
+  health: needStatShape,
+  sleep: needStatShape,
+  social: needStatShape,
+  education: needStatShape,
+  entertainment: needStatShape,
+  faith: needStatShape,
+  financialSafety: needStatShape,
+  housingSafety: needStatShape,
+  physicalSafety: needStatShape,
+  socialRating: needStatShape,
+})
+
 

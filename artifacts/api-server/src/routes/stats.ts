@@ -57,4 +57,8 @@ router.get("/stats/population-groups", (req, res): void => {
   res.json(simulationEngine.getPopulationGroups(groupBy as "personality" | "employment" | "ageGroup"));
 });
 
+router.get("/stats/needs", (_req, res): void => {
+  res.json(simulationEngine.getNeedsStats());
+});
+
 export default router;

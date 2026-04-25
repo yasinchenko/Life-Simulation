@@ -81,6 +81,55 @@ interface PopulationGroupsResponse {
   groups: PopulationGroup[];
 }
 
+interface NeedStat {
+  avg: number;
+  criticalPct: number;
+  lowPct: number;
+}
+interface NeedsStats {
+  hunger: NeedStat;
+  comfort: NeedStat;
+  health: NeedStat;
+  sleep: NeedStat;
+  social: NeedStat;
+  education: NeedStat;
+  entertainment: NeedStat;
+  faith: NeedStat;
+  financialSafety: NeedStat;
+  housingSafety: NeedStat;
+  physicalSafety: NeedStat;
+  socialRating: NeedStat;
+}
+
+const NEED_META: { key: keyof NeedsStats; label: string; color: string }[] = [
+  { key: "hunger",          label: "Голод",               color: "hsl(43,100%,50%)"  },
+  { key: "health",          label: "Здоровье",            color: "hsl(348,83%,52%)"  },
+  { key: "sleep",           label: "Сон",                 color: "hsl(220,70%,60%)"  },
+  { key: "comfort",         label: "Комфорт",             color: "hsl(173,80%,40%)"  },
+  { key: "social",          label: "Общение",             color: "hsl(280,80%,60%)"  },
+  { key: "financialSafety", label: "Фин. безопасность",   color: "hsl(160,60%,45%)"  },
+  { key: "physicalSafety",  label: "Физ. безопасность",   color: "hsl(0,70%,55%)"    },
+  { key: "housingSafety",   label: "Безопасность жилья",  color: "hsl(25,90%,55%)"   },
+  { key: "entertainment",   label: "Развлечения",         color: "hsl(120,55%,45%)"  },
+  { key: "education",       label: "Образование",         color: "hsl(270,70%,60%)"  },
+  { key: "faith",           label: "Вера",                color: "hsl(35,90%,55%)"   },
+  { key: "socialRating",    label: "Соц. рейтинг",        color: "hsl(210,100%,55%)" },
+];
+
+function needBarColor(avg: number): string {
+  if (avg < 25) return "hsl(348,83%,52%)";
+  if (avg < 50) return "hsl(43,100%,50%)";
+  if (avg < 75) return "hsl(173,80%,40%)";
+  return "hsl(142,70%,45%)";
+}
+
+function needStatusLabel(avg: number): { text: string; cls: string } {
+  if (avg < 25) return { text: "критично",   cls: "text-[hsl(348,83%,52%)]" };
+  if (avg < 50) return { text: "низко",      cls: "text-[hsl(43,100%,50%)]" };
+  if (avg < 75) return { text: "норма",      cls: "text-[hsl(173,80%,40%)]" };
+  return              { text: "хорошо",     cls: "text-[hsl(142,70%,45%)]" };
+}
+
 export default function AgentsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [page, setPage] = useState(1);
@@ -92,6 +141,7 @@ export default function AgentsPage() {
   const [groupLoading, setGroupLoading] = useState(false);
   const [groupSortCol, setGroupSortCol] = useState<keyof PopulationGroup>("count");
   const [groupSortDir, setGroupSortDir] = useState<"asc" | "desc">("desc");
+  const [needsStats, setNeedsStats] = useState<NeedsStats | null>(null);
 
   const { data: simState } = useGetSimulationState({
     query: {
@@ -121,13 +171,24 @@ export default function AgentsPage() {
     }
   }, [groupBy]);
 
+  const fetchNeeds = useCallback(async () => {
+    try {
+      const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+      const res = await fetch(`${base}/api/stats/needs`);
+      if (res.ok) setNeedsStats(await res.json());
+    } catch {}
+  }, []);
+
   useEffect(() => {
     if (viewMode === "analysis") {
       fetchGroups();
-      const id = setInterval(fetchGroups, running ? 8000 : 60000);
-      return () => clearInterval(id);
+      fetchNeeds();
+      const interval = running ? 8000 : 60000;
+      const id1 = setInterval(fetchGroups, interval);
+      const id2 = setInterval(fetchNeeds, interval);
+      return () => { clearInterval(id1); clearInterval(id2); };
     }
-  }, [viewMode, fetchGroups, running]);
+  }, [viewMode, fetchGroups, fetchNeeds, running]);
 
   const handleSort = (col: SortBy) => {
     if (sortBy === col) {
@@ -317,6 +378,9 @@ export default function AgentsPage() {
             </div>
           )}
 
+          {/* ── Удовлетворённость потребностей ─────────────────────────────── */}
+          {needsStats && <NeedsPanel stats={needsStats} />}
+
           {groupData && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -438,6 +502,89 @@ export default function AgentsPage() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function NeedsPanel({ stats }: { stats: NeedsStats }) {
+  const sorted = [...NEED_META].sort((a, b) => stats[a.key].avg - stats[b.key].avg);
+
+  const overallAvg = Math.round(
+    NEED_META.reduce((s, m) => s + stats[m.key].avg, 0) / NEED_META.length * 10
+  ) / 10;
+  const criticalCount = sorted.filter(m => stats[m.key].avg < 25).length;
+  const lowCount = sorted.filter(m => stats[m.key].avg >= 25 && stats[m.key].avg < 50).length;
+
+  return (
+    <div className="bg-card border border-card-border rounded overflow-hidden">
+      <div className="px-4 pt-3.5 pb-2 border-b border-border flex items-center justify-between gap-4">
+        <h3 className="text-[10px] font-medium tracking-widest uppercase text-muted-foreground">
+          Удовлетворённость потребностей
+        </h3>
+        <div className="flex items-center gap-3 shrink-0">
+          <span className="text-[10px] text-muted-foreground">
+            Среднее:{" "}
+            <span className="font-semibold tabular-nums" style={{ color: needBarColor(overallAvg) }}>
+              {overallAvg}
+            </span>
+          </span>
+          {criticalCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[hsl(348,83%,52%)]/15 text-[hsl(348,83%,52%)] border border-[hsl(348,83%,52%)]/25">
+              {criticalCount} крит.
+            </span>
+          )}
+          {lowCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[hsl(43,100%,50%)]/15 text-[hsl(43,100%,50%)] border border-[hsl(43,100%,50%)]/25">
+              {lowCount} низко
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-border/40">
+        {[sorted.slice(0, 6), sorted.slice(6)].map((col, ci) => (
+          <div key={ci} className="divide-y divide-border/30">
+            {col.map((meta) => {
+              const s = stats[meta.key];
+              const status = needStatusLabel(s.avg);
+              return (
+                <div key={meta.key} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/10 transition-colors">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ background: meta.color, boxShadow: `0 0 5px ${meta.color}80` }}
+                  />
+                  <span className="text-xs text-muted-foreground w-36 shrink-0 truncate">{meta.label}</span>
+                  <div className="flex-1 h-2 bg-muted/40 rounded-full overflow-hidden min-w-0">
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${s.avg}%`, background: needBarColor(s.avg) }}
+                    />
+                  </div>
+                  <span className="text-xs tabular-nums font-semibold w-8 text-right shrink-0 text-foreground">
+                    {s.avg}
+                  </span>
+                  <span className={cn("text-[10px] w-14 text-right shrink-0 font-medium", status.cls)}>
+                    {status.text}
+                  </span>
+                  {s.criticalPct > 0 && (
+                    <span className="text-[10px] text-[hsl(348,83%,52%)] tabular-nums w-12 text-right shrink-0">
+                      {s.criticalPct}% крит
+                    </span>
+                  )}
+                  {s.criticalPct === 0 && s.lowPct > 0 && (
+                    <span className="text-[10px] text-[hsl(43,100%,50%)] tabular-nums w-12 text-right shrink-0">
+                      {s.lowPct}% низко
+                    </span>
+                  )}
+                  {s.criticalPct === 0 && s.lowPct === 0 && (
+                    <span className="w-12 shrink-0" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -524,7 +524,8 @@ class SimulationEngine {
     }
     logger.info({ agentCount: this.agentStatHistory.size }, "Loaded agent stat history from DB");
 
-    await db.execute(sql`
+    // Очистка старых записей — запускается в фоне, не блокирует старт
+    void db.execute(sql`
       DELETE FROM agent_stat_history
       WHERE id NOT IN (
         SELECT id FROM (
@@ -533,7 +534,7 @@ class SimulationEngine {
         ) ranked
         WHERE rn <= ${AGENT_STAT_HISTORY_MAX}
       )
-    `);
+    `).catch(err => logger.warn({ err }, "Background agent_stat_history cleanup failed"));
   }
 
   private async loadBusinesses(): Promise<void> {
@@ -2334,6 +2335,19 @@ class SimulationEngine {
     }
     if (dbRows.length > 0) {
       await db.insert(agentStatHistoryTable).values(dbRows);
+      // Удаляем лишние строки сразу после вставки (только для затронутых агентов)
+      const agentIds = dbRows.map(r => r.agentId);
+      void db.execute(sql`
+        DELETE FROM agent_stat_history
+        WHERE id IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY tick DESC) AS rn
+            FROM agent_stat_history
+            WHERE agent_id = ANY(${agentIds}::int[])
+          ) ranked
+          WHERE rn > ${AGENT_STAT_HISTORY_MAX}
+        )
+      `).catch(() => {});
     }
   }
 
@@ -2599,6 +2613,41 @@ class SimulationEngine {
       demand: Math.round(g.demand * 10) / 10,
       supply: Math.round(g.supply * 10) / 10,
     }));
+  }
+
+  getNeedsStats() {
+    const agents = Array.from(this.agents.values());
+    const n = agents.length;
+    if (n === 0) {
+      const empty = { avg: 0, criticalPct: 0, lowPct: 0 };
+      return {
+        hunger: empty, comfort: empty, health: empty, sleep: empty,
+        social: empty, education: empty, entertainment: empty, faith: empty,
+        financialSafety: empty, housingSafety: empty, physicalSafety: empty, socialRating: empty,
+      };
+    }
+    type NeedKey = keyof typeof agents[0]["needs"];
+    const keys: NeedKey[] = [
+      "hunger", "comfort", "health", "sleep", "social", "education",
+      "entertainment", "faith", "financialSafety", "housingSafety",
+      "physicalSafety", "socialRating",
+    ];
+    const result: Record<string, { avg: number; criticalPct: number; lowPct: number }> = {};
+    for (const key of keys) {
+      let sum = 0, critical = 0, low = 0;
+      for (const a of agents) {
+        const v = a.needs[key];
+        sum += v;
+        if (v < 25) critical++;
+        else if (v < 50) low++;
+      }
+      result[key] = {
+        avg: Math.round((sum / n) * 10) / 10,
+        criticalPct: Math.round((critical / n) * 1000) / 10,
+        lowPct: Math.round((low / n) * 1000) / 10,
+      };
+    }
+    return result;
   }
 
   getGovernment() {
