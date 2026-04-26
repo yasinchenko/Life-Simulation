@@ -6,3 +6,9 @@ id = "4rwUiAPVDqjW-Ynn4FGq9"
 uri = "file://system-description.md"
 type = "text"
 title = "Life Simulation — Техническое описание системы"
+
+[[outputs]]
+id = "du8F7Hz6f6UZIgwbTDmmz"
+uri = "file://.local/needs-system.md"
+type = "text"
+title = "Система потребностей жителей"
