@@ -7,6 +7,7 @@ import {
   GetSimulationStateResponse,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middleware/admin";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -23,7 +24,12 @@ router.post("/simulation/stop", requireAdmin, async (req, res): Promise<void> =>
 });
 
 router.post("/simulation/reset", requireAdmin, async (req, res): Promise<void> => {
-  await simulationEngine.reset();
+  // Run reset in background so the HTTP request returns immediately.
+  // The client polls /api/simulation/state to see when reset finishes.
+  simulationEngine.reset().catch((err) => {
+    logger.error({ err }, "Simulation reset failed");
+  });
+  // Return the current (pre-reset) state right away
   const state = simulationEngine.getSimulationState();
   res.json(ResetSimulationResponse.parse(state));
 });

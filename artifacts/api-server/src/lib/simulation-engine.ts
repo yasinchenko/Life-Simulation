@@ -1056,13 +1056,19 @@ class SimulationEngine {
     await this.waitForTickComplete();
     logger.info("Resetting simulation...");
 
-    await db.delete(statsHistoryTable);
-    await db.delete(agentStatHistoryTable);
-    await db.delete(relationsTable);
-    await db.delete(needsTable);
-    await db.delete(agentsTable);
-    await db.delete(goodsTable);
-    await db.delete(businessesTable);
+    // Use TRUNCATE for fast bulk-delete — much faster than DELETE on large tables
+    // CASCADE handles FK dependencies automatically; RESTART IDENTITY resets serial PKs
+    await db.execute(sql`
+      TRUNCATE TABLE
+        stats_history,
+        agent_stat_history,
+        relations,
+        needs,
+        agents,
+        goods,
+        businesses
+      RESTART IDENTITY CASCADE
+    `);
 
     this.agents.clear();
     this.businesses.clear();
@@ -1077,7 +1083,7 @@ class SimulationEngine {
       running: false,
       gameHour: 0,
       gameDay: 1,
-      governmentBudget: 10000,
+      governmentBudget: 200000,
       totalTaxCollected: 0,
       totalSubsidiesPaid: 0,
       totalPensionPaid: 0,
