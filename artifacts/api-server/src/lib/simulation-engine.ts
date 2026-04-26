@@ -1581,8 +1581,8 @@ class SimulationEngine {
       let income = 0;
 
       if (criticalNeed === "sleep") {
-        // Agent sleeps: recover sleep, boost health a little
-        agent.needs.sleep = clamp(agent.needs.sleep + rand(22, 35));
+        // Agent sleeps: slow recovery so residents need 8-12 hours of sleep per day
+        agent.needs.sleep = clamp(agent.needs.sleep + rand(2, 6));
         agent.needs.health = clamp(agent.needs.health + 0.3);
         agent.currentAction = "sleep";
       } else if (criticalNeed === "health") {
@@ -1608,8 +1608,8 @@ class SimulationEngine {
           dbgMoneyOut += hospitalGood.currentPrice;
           dbgSuccessful++;
         } else {
-          // No hospital available or can't afford → rest at home
-          agent.needs.sleep = clamp(agent.needs.sleep + rand(10, 18));
+          // No hospital available or can't afford → rest at home (less sleep recovery than proper sleep)
+          agent.needs.sleep = clamp(agent.needs.sleep + rand(1, 3));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
           agent.needs.health = clamp(agent.needs.health + 0.3);
           agent.currentAction = "rest";
