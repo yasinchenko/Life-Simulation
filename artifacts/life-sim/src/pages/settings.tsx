@@ -16,6 +16,18 @@ import { Save, Lock, LogIn, LogOut, Play, Square, RotateCcw } from "lucide-react
 import { useAdmin } from "@/contexts/admin-context";
 import { cn } from "@/lib/utils";
 
+function getApiErrorMessage(err: unknown): string {
+  if (err && typeof err === "object") {
+    const asObj = err as Record<string, unknown>;
+    if (asObj.data && typeof asObj.data === "object") {
+      const data = asObj.data as Record<string, unknown>;
+      if (typeof data.error === "string") return data.error;
+    }
+    if (typeof asObj.message === "string") return asObj.message;
+  }
+  return "Неизвестная ошибка";
+}
+
 interface SettingField {
   key: string;
   label: string;
@@ -240,8 +252,9 @@ export default function SettingsPage() {
         toast.success("Настройки применены");
         setDirty(false);
       },
-      onError: () => {
-        toast.error("Ошибка при сохранении настроек");
+      onError: (err) => {
+        const msg = getApiErrorMessage(err);
+        toast.error(`Ошибка при сохранении настроек: ${msg}`);
       },
     },
   });
@@ -252,6 +265,10 @@ export default function SettingsPage() {
         qc.invalidateQueries({ queryKey: getGetSimulationStateQueryKey() });
         toast.success("Симуляция запущена");
       },
+      onError: (err) => {
+        const msg = getApiErrorMessage(err);
+        toast.error(`Ошибка запуска симуляции: ${msg}`);
+      },
     },
   });
 
@@ -260,6 +277,10 @@ export default function SettingsPage() {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: getGetSimulationStateQueryKey() });
         toast.info("Симуляция остановлена");
+      },
+      onError: (err) => {
+        const msg = getApiErrorMessage(err);
+        toast.error(`Ошибка остановки симуляции: ${msg}`);
       },
     },
   });
@@ -270,6 +291,10 @@ export default function SettingsPage() {
         qc.invalidateQueries();
         toast.success("Симуляция сброшена — переход на дашборд");
         setTimeout(() => setLocation("/"), 1500);
+      },
+      onError: (err) => {
+        const msg = getApiErrorMessage(err);
+        toast.error(`Ошибка сброса симуляции: ${msg}`);
       },
     },
   });

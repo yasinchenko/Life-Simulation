@@ -26,7 +26,13 @@ function loadStoredToken(): string | null {
 }
 
 export function AdminProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => loadStoredToken());
+  const [token, setToken] = useState<string | null>(() => {
+    const stored = loadStoredToken();
+    if (stored) {
+      setAuthTokenGetter(() => stored);
+    }
+    return stored;
+  });
 
   useEffect(() => {
     if (token) {
@@ -51,6 +57,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       const data = await res.json() as { token: string; expiresAt: number };
       localStorage.setItem(STORAGE_KEY, data.token);
       localStorage.setItem(EXPIRES_KEY, String(data.expiresAt));
+      setAuthTokenGetter(() => data.token);
       setToken(data.token);
       return { success: true };
     } catch {
@@ -61,6 +68,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(EXPIRES_KEY);
+    setAuthTokenGetter(null);
     setToken(null);
   }, []);
 
