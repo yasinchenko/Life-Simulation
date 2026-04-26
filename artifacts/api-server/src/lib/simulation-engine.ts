@@ -1973,31 +1973,32 @@ class SimulationEngine {
       taxRevenue += corpTax;
       this.state.totalTaxCollected += corpTax;
 
-      // ── Daily flat subsidy for public services ────────────────────────────
-      // All public services (schools, parks, hospitals, temples) receive a
-      // fixed per-employee subsidy once per game day.
-      //   school / park   → 2.2× baseSalary covers grade-1 wages + 120% buffer
-      //                     (free services, fully state-funded)
-      //   hospital / temple → 1.0× baseSalary covers grade-1 wages
-      //                     (patients/visitors cover the remainder)
-      // Floor: each building receives at least baseSalary/day even when empty,
-      // so that an understaffed building can slowly recover its balance while
-      // recruitment proceeds.
-      // Guard: stops payments when government budget is insufficient; partial
-      // payment made when budget is between 0 and the required amount.
-      const PUBLIC_SUBSIDY_MULTIPLIER: Record<string, number> = {
-        school:   2.2,
-        park:     2.2,
-        hospital: 1.0,
-        temple:   1.0,
-      };
+      // ── Daily public service funding: actual payroll + 10% infrastructure ──
+      // Government covers 100% of actual employee salaries (based on real grades)
+      // plus 10% overhead for building maintenance and operations.
+      // Formula: subsidy = sum(salary_of_each_employee) × 1.10
+      // Empty buildings receive a small maintenance floor (baseSalary × 0.5/day)
+      // so they can stay operational while hiring proceeds.
+
+      // Step 1: compute actual daily payroll per public-sector business
+      const publicPayrollMap = new Map<number, number>();
+      for (const a of this.agents.values()) {
+        if (a.isRetired || a.employerId == null) continue;
+        const pb = this.businesses.get(a.employerId);
+        if (!pb || !PUBLIC_SECTOR_TYPES.has(pb.type)) continue;
+        publicPayrollMap.set(pb.id, (publicPayrollMap.get(pb.id) ?? 0) + calcSalary(baseSalary, a.careerLevel));
+      }
+
+      // Step 2: fund each public business
+      const INFRA_OVERHEAD = 0.10; // 10% on top of payroll for infrastructure
       let dailyPublicSubsidy = 0;
       for (const biz of this.businesses.values()) {
-        const multiplier = PUBLIC_SUBSIDY_MULTIPLIER[biz.type];
-        if (multiplier == null) continue;
-        const minSubsidy = baseSalary; // 1× base (50/day) floor for unstaffed buildings
-        const staffSubsidy = biz.employeeCount * baseSalary * multiplier;
-        const subsidy = Math.max(staffSubsidy, minSubsidy);
+        if (!PUBLIC_SECTOR_TYPES.has(biz.type)) continue;
+        const payroll = publicPayrollMap.get(biz.id) ?? 0;
+        // Staffed: cover wages + 10% infra. Empty: minimal maintenance floor.
+        const subsidy = payroll > 0
+          ? Math.round(payroll * (1 + INFRA_OVERHEAD))
+          : Math.round(baseSalary * 0.5);
         if (runningBudget >= subsidy) {
           biz.balance += subsidy;
           runningBudget -= subsidy;
