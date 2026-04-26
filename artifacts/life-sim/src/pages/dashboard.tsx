@@ -80,8 +80,9 @@ export default function Dashboard() {
   };
 
   const formatGameTime = () => {
-    if (!state) return "---";
-    return `День ${state.gameDay}`;
+    if (!state) return "--:--";
+    const h = String(state.gameHour).padStart(2, "0");
+    return `День ${state.gameDay}, ${h}:00`;
   };
 
   return (
@@ -333,4 +334,3 @@ function ChartCard({ title, data, dataKey, color, domain, running }: {
     </div>
   );
 }
-

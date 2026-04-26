@@ -414,8 +414,8 @@ export default function AgentDetailPage() {
               const isRetiredEvt = entry.event === "retired";
               const isQuit       = entry.event === "quit";
               const isPromoted   = entry.event === "promoted";
-              const gameDay = entry.tick;
-              const durationDays = entry.duration != null ? entry.duration : null;
+              const gameDay = Math.floor(entry.tick / 24) + 1;
+              const durationDays = entry.duration != null ? Math.floor(entry.duration / 24) : null;
               return (
                 <div key={i} className="flex items-start gap-3 py-2 border-b border-border/30 last:border-0">
                   <div className="mt-0.5 shrink-0">
