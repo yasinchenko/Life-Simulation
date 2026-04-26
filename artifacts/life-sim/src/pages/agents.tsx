@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import {
   useListAgents,
@@ -18,6 +18,14 @@ type SortBy = "name" | "age" | "mood" | "money" | "currentAction";
 type SortDir = "asc" | "desc";
 type GroupBy = "personality" | "employment" | "ageGroup";
 type ViewMode = "table" | "analysis";
+
+interface AgentStatSnapshot {
+  tick: number;
+  money: number;
+  mood: number;
+  age: number;
+  socialization: number;
+}
 
 const ACTION_LABELS: Record<string, string> = {
   eat: "Ест",
@@ -132,6 +140,87 @@ function needStatusLabel(avg: number): { text: string; cls: string } {
   return              { text: "хорошо",     cls: "text-[hsl(142,70%,45%)]" };
 }
 
+type NumericStatConfig = { numeric: true; historyKey: keyof AgentStatSnapshot; color: string };
+type NonNumericStatConfig = { numeric: false };
+type SortStatConfig = NumericStatConfig | NonNumericStatConfig;
+
+const SORT_STAT_CONFIG: Record<SortBy, SortStatConfig> = {
+  money:         { numeric: true,  historyKey: "money", color: "hsl(173,80%,40%)" },
+  mood:          { numeric: true,  historyKey: "mood",  color: "hsl(43,100%,50%)" },
+  age:           { numeric: true,  historyKey: "age",   color: "hsl(210,100%,60%)" },
+  name:          { numeric: false },
+  currentAction: { numeric: false },
+};
+
+function SparklineTooltip({ history, statKey, color, agentName }: {
+  history: AgentStatSnapshot[];
+  statKey: keyof AgentStatSnapshot;
+  color: string;
+  agentName: string;
+}) {
+  if (history.length < 2) {
+    return (
+      <div className="text-[10px] text-muted-foreground px-1">
+        Недостаточно данных
+      </div>
+    );
+  }
+
+  const values = history.map(h => h[statKey] as number);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const W = 140;
+  const H = 48;
+  const pad = 4;
+  const innerW = W - pad * 2;
+  const innerH = H - pad * 2;
+
+  const points = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * innerW;
+    const y = pad + (1 - (v - min) / range) * innerH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  const lastVal = values[values.length - 1];
+  const firstVal = values[0];
+  const trend = lastVal - firstVal;
+
+  return (
+    <div>
+      <p className="text-[10px] font-medium text-foreground mb-1.5 truncate max-w-[140px]">{agentName}</p>
+      <svg width={W} height={H} className="block">
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {values.map((v, i) => {
+          if (i !== values.length - 1) return null;
+          const x = pad + (i / (values.length - 1)) * innerW;
+          const y = pad + (1 - (v - min) / range) * innerH;
+          return <circle key={i} cx={x} cy={y} r={2.5} fill={color} />;
+        })}
+      </svg>
+      <div className="flex items-center justify-between mt-1">
+        <span className="text-[9px] text-muted-foreground">
+          {typeof firstVal === "number" ? (Number.isInteger(firstVal) ? firstVal.toLocaleString() : firstVal.toFixed(1)) : firstVal}
+        </span>
+        <span className={cn("text-[9px] font-semibold", trend >= 0 ? "text-[hsl(173,80%,40%)]" : "text-[hsl(348,83%,47%)]")}>
+          {trend >= 0 ? "+" : ""}{typeof trend === "number" ? (Number.isInteger(trend) ? Math.round(trend).toLocaleString() : trend.toFixed(1)) : trend}
+        </span>
+        <span className="text-[9px] text-muted-foreground">
+          {typeof lastVal === "number" ? (Number.isInteger(lastVal) ? lastVal.toLocaleString() : lastVal.toFixed(1)) : lastVal}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [page, setPage] = useState(1);
@@ -144,6 +233,43 @@ export default function AgentsPage() {
   const [groupSortCol, setGroupSortCol] = useState<keyof PopulationGroup>("count");
   const [groupSortDir, setGroupSortDir] = useState<"asc" | "desc">("desc");
   const [needsStats, setNeedsStats] = useState<NeedsStats | null>(null);
+
+  const [hoveredAgentId, setHoveredAgentId] = useState<number | null>(null);
+  const [hoveredAgentName, setHoveredAgentName] = useState<string>("");
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [agentHistory, setAgentHistory] = useState<Map<number, AgentStatSnapshot[]>>(new Map());
+  const fetchingRef = useRef<Set<number>>(new Set());
+  const cachedIdsRef = useRef<Set<number>>(new Set());
+
+  const fetchHistory = useCallback(async (id: number) => {
+    if (fetchingRef.current.has(id) || cachedIdsRef.current.has(id)) return;
+    fetchingRef.current.add(id);
+    try {
+      const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+      const res = await fetch(`${base}/api/agents/${id}/stat-history`);
+      if (res.ok) {
+        const data: AgentStatSnapshot[] = await res.json();
+        cachedIdsRef.current.add(id);
+        setAgentHistory(prev => new Map(prev).set(id, data));
+      }
+    } catch {
+    } finally {
+      fetchingRef.current.delete(id);
+    }
+  }, []);
+
+  const handleRowMouseEnter = useCallback((agent: AgentItem, e: React.MouseEvent, isNumericSort: boolean) => {
+    setHoveredAgentId(agent.id);
+    setHoveredAgentName(agent.name);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setTooltipPos({ x: rect.right + 8, y: rect.top });
+    if (isNumericSort) fetchHistory(agent.id);
+  }, [fetchHistory]);
+
+  const handleRowMouseLeave = useCallback(() => {
+    setHoveredAgentId(null);
+    setTooltipPos(null);
+  }, []);
 
   const { data: simState } = useGetSimulationState({
     query: {
@@ -229,6 +355,9 @@ export default function AgentsPage() {
     if (groupSortCol !== col) return <span className="w-3 h-3 inline-block opacity-0" />;
     return groupSortDir === "asc" ? <ChevronUp className="w-3 h-3 inline" /> : <ChevronDown className="w-3 h-3 inline" />;
   };
+
+  const statConfig = SORT_STAT_CONFIG[sortBy];
+  const hoveredHistory = hoveredAgentId != null ? agentHistory.get(hoveredAgentId) : undefined;
 
   return (
     <div className="p-6 space-y-4">
@@ -346,7 +475,13 @@ export default function AgentsPage() {
                     </tr>
                   ))
                 ) : (data?.agents ?? []).map(agent => (
-                  <AgentRow key={agent.id} agent={agent} />
+                  <AgentRow
+                    key={agent.id}
+                    agent={agent}
+                    isNumericSort={statConfig.numeric}
+                    onMouseEnter={handleRowMouseEnter}
+                    onMouseLeave={handleRowMouseLeave}
+                  />
                 ))}
               </tbody>
             </table>
@@ -380,7 +515,6 @@ export default function AgentsPage() {
             </div>
           )}
 
-          {/* ── Удовлетворённость потребностей ─────────────────────────────── */}
           {needsStats && <NeedsPanel stats={needsStats} />}
 
           {groupData && (
@@ -397,14 +531,14 @@ export default function AgentsPage() {
                   <thead>
                     <tr className="border-b border-border">
                       {([
-                        ["label",        "Группа",          "text-left"],
-                        ["count",        "Кол-во",          "text-right"],
-                        ["pct",          "Доля, %",         "text-right"],
-                        ["avgMood",      "Ср. настроение",  "text-right"],
-                        ["avgMoney",     "Ср. богатство",   "text-right"],
-                        ["avgAge",       "Ср. возраст",     "text-right"],
-                        ["employedCount","Занято",          "text-right"],
-                        ["topAction",    "Топ действие",    "text-left"],
+                        ["label",         "Группа",          "text-left"],
+                        ["count",         "Кол-во",          "text-right"],
+                        ["pct",           "Доля, %",         "text-right"],
+                        ["avgMood",       "Ср. настроение",  "text-right"],
+                        ["avgMoney",      "Ср. богатство",   "text-right"],
+                        ["avgAge",        "Ср. возраст",     "text-right"],
+                        ["employedCount", "Занято",          "text-right"],
+                        ["topAction",     "Топ действие",    "text-left"],
                       ] as [keyof PopulationGroup, string, string][]).map(([col, label, align]) => (
                         <th
                           key={col}
@@ -504,6 +638,37 @@ export default function AgentsPage() {
           )}
         </div>
       )}
+
+      {hoveredAgentId != null && tooltipPos && (
+        <div
+          className="fixed z-50 bg-card border border-card-border rounded p-3 shadow-lg pointer-events-none"
+          style={{
+            left: Math.min(tooltipPos.x, window.innerWidth - 180),
+            top: Math.max(8, tooltipPos.y - 20),
+          }}
+        >
+          {statConfig.numeric ? (
+            hoveredHistory && hoveredHistory.length >= 2 ? (
+              <SparklineTooltip
+                history={hoveredHistory}
+                statKey={statConfig.historyKey}
+                color={statConfig.color}
+                agentName={hoveredAgentName}
+              />
+            ) : (
+              <div>
+                <p className="text-[10px] font-medium text-foreground mb-1 truncate max-w-[140px]">{hoveredAgentName}</p>
+                <p className="text-[10px] text-muted-foreground">История накапливается...</p>
+              </div>
+            )
+          ) : (
+            <div>
+              <p className="text-[10px] font-medium text-foreground mb-1 truncate max-w-[140px]">{hoveredAgentName}</p>
+              <p className="text-[10px] text-muted-foreground">Сортировка по числовому столбцу<br />для просмотра графика</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -600,13 +765,25 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
   );
 }
 
-function AgentRow({ agent }: { agent: AgentItem }) {
+function AgentRow({
+  agent,
+  isNumericSort,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  agent: AgentItem;
+  isNumericSort: boolean;
+  onMouseEnter: (agent: AgentItem, e: React.MouseEvent, isNumericSort: boolean) => void;
+  onMouseLeave: () => void;
+}) {
   const [, navigate] = useLocation();
 
   return (
     <tr
       className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
       onClick={() => navigate(`/agents/${agent.id}`)}
+      onMouseEnter={(e) => onMouseEnter(agent, e, isNumericSort)}
+      onMouseLeave={onMouseLeave}
     >
       <td className="px-3 py-2 font-medium text-foreground">{agent.name}</td>
       <td className="px-3 py-2 text-muted-foreground">{agent.age}</td>
