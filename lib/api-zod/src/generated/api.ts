@@ -84,6 +84,9 @@ export const GetSimulationStateResponse = zod.object({
   "unemploymentRate": zod.number(),
   "governmentBudget": zod.number(),
   "totalTaxCollected": zod.number(),
+  "totalSubsidiesPaid": zod.number().optional().default(0),
+  "totalPensionPaid": zod.number().optional().default(0),
+  "totalPublicServicesPaid": zod.number().optional().default(0),
   "avgWealth": zod.number()
 })
 

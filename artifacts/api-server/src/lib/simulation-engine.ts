@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: SimulationConfig = {
   subsidyAmount: 20,
   socialInteractionStrength: 2,
   priceMarkup: 0.2,
-  pensionRate: 0.6,
+  pensionRate: 0.3,
 };
 
 const AGENT_SORT_KEYS = ["name", "age", "mood", "money", "currentAction"] as const;
@@ -79,16 +79,25 @@ interface BusinessState extends Business {
 // Each value = sum of all role caps in the corresponding table column.
 // Column mapping: food≈col1(64), service≈col5(39), hospital≈col3(27),
 //   park≈col4(63), temple≈col2(22), farm≈col6(95), school≈col7(31), workshop≈col8(30)
+// Public-sector caps are intentionally small so the total government subsidy
+// bill stays within the tax-revenue budget.  With baseSalary=50, taxRate=15%,
+// and ~1000 agents the sustainable per-business headcount is roughly:
+//   maxEmp * baseSalary * subsidyMult ≤ (avg_wage * employed * taxRate) / numPublicBiz
+// Commercial (food/service) caps set the market size for consumer goods.
 const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = {
-  food:     64,
-  service:  39,
-  hospital: 27,
-  park:     63,
-  temple:   22,
-  farm:     95,
-  school:   31,
-  workshop: 30,
+  food:     40,
+  service:  25,
+  hospital: 12,   // was 27 – 6 hospitals × 12 = 72 total public health workers
+  park:     15,   // was 63 – 5 parks × 15 = 75 total rec workers
+  temple:   8,    // was 22 – 3 temples × 8 = 24 total
+  farm:     50,
+  school:   12,   // was 31 – 4 schools × 12 = 48 total educators
+  workshop: 20,
 };
+
+// Business types funded by government subsidy.  Workers here are capped at
+// grade 2 (Менеджер) so their wages always stay within the subsidy envelope.
+const PUBLIC_SECTOR_TYPES = new Set(["school", "park", "hospital", "temple"]);
 
 interface GoodState extends Good {}
 
@@ -454,9 +463,9 @@ class SimulationEngine {
         gameDay: row.gameDay,
         // Floor at 0 — negative budgets from old buggy code are reset on restart
         governmentBudget: Math.max(0, row.governmentBudget),
-        totalTaxCollected: row.totalTaxCollected,
-        totalSubsidiesPaid: row.totalSubsidiesPaid,
-        totalPensionPaid: row.totalPensionPaid,
+        totalTaxCollected: row.totalTaxCollected ?? 0,
+        totalSubsidiesPaid: row.totalSubsidiesPaid ?? 0,
+        totalPensionPaid: row.totalPensionPaid ?? 0,
         totalPublicServicesPaid: row.totalPublicServicesPaid ?? 0,
       };
     } else {
@@ -590,6 +599,21 @@ class SimulationEngine {
           biz.employeeCount--;
           excess--;
         }
+      }
+    }
+
+    // Startup grade correction: public-sector workers are capped at grade 2
+    // (Менеджер) to prevent wage inflation from making state-funded institutions
+    // permanently unprofitable.  The subsidy formula (2.2× / 1.0× baseSalary) is
+    // designed for grade-1/2 employees — grade-3+ wages exceed what government
+    // can sustainably reimburse within the tax budget.
+    const MAX_PUBLIC_GRADE = 2;
+    for (const agent of this.agents.values()) {
+      if (agent.employerId == null) continue;
+      const employer = this.businesses.get(agent.employerId);
+      if (!employer || !PUBLIC_SECTOR_TYPES.has(employer.type)) continue;
+      if (agent.careerLevel > MAX_PUBLIC_GRADE) {
+        agent.careerLevel = MAX_PUBLIC_GRADE;
       }
     }
   }
@@ -1177,11 +1201,18 @@ class SimulationEngine {
       }
     }
 
-    // Include businesses with balance > -200 so that recovering businesses can still hire
+    // Public-sector businesses (schools, parks, hospitals, temples) get government
+    // subsidies and must be allowed to hire even when their balance is negative —
+    // otherwise they fire all staff, receive only the minimum floor subsidy (≈0),
+    // and can never recover.  Commercial businesses (food/service) must self-fund,
+    // so they are excluded once their balance drops too low.
     const availableBusinessIds = Array.from(this.businesses.values())
       .filter(b => {
-        if (b.balance <= -200) return false;
         if (b.type === "farm" || b.type === "workshop") return false;
+        // Commercial: only hire if not deeply in debt
+        if (!PUBLIC_SECTOR_TYPES.has(b.type) && b.balance <= -200) return false;
+        // Public sector: allow hiring as long as balance is not catastrophically low
+        if (PUBLIC_SECTOR_TYPES.has(b.type) && b.balance <= -80_000) return false;
         // Use maxEmployees as the single source of truth for hiring capacity
         if (b.employeeCount >= b.maxEmployees) return false;
         return true;
@@ -1294,11 +1325,19 @@ class SimulationEngine {
         const careerTarget = targetGrade(agent.ambition);
         const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : 0;
 
-        if (agent.careerLevel < careerTarget && agent.employerId != null && tenure >= 48) {
-          // Ambition-driven promotion attempt at current employer (~4%×ambition per tick)
-          // Интеллект даёт бонус к продвижению: intel=50 → +0%, intel=90 → +4%
-          const intelligenceBonus = ((agent.intelligence ?? 50) - 50) * 0.001;
-          const promotionProb = (agent.ambition / 100) * 0.04 + intelligenceBonus;
+        // Public-sector workers (hospital / school / park / temple) are capped at
+        // grade 2 (Менеджер) so their wages always stay within the subsidy envelope.
+        const employerBiz = agent.employerId ? this.businesses.get(agent.employerId) : null;
+        const isPublicSectorJob = employerBiz != null && PUBLIC_SECTOR_TYPES.has(employerBiz.type);
+        const effectiveCareerTarget = isPublicSectorJob ? Math.min(careerTarget, 2) : careerTarget;
+
+        if (agent.careerLevel < effectiveCareerTarget && agent.employerId != null && tenure >= 120) {
+          // Ambition-driven promotion attempt at current employer.
+          // Rate reduced to 0.5%×ambition per tick so grade-5 realistically
+          // takes many months of game time, preventing early wage hyper-inflation.
+          // Интеллект даёт бонус: intel=50→+0%, intel=90→+0.4%.
+          const intelligenceBonus = ((agent.intelligence ?? 50) - 50) * 0.0001;
+          const promotionProb = (agent.ambition / 100) * 0.005 + intelligenceBonus;
           if (Math.random() < promotionProb) {
             agent.careerLevel = Math.min(5, agent.careerLevel + 1);
             const biz = this.businesses.get(agent.employerId);
@@ -1879,17 +1918,18 @@ class SimulationEngine {
       taxRevenue += corpTax;
       this.state.totalTaxCollected += corpTax;
 
-      // ── Daily flat subsidy for all public services ────────────────────────
-      // All public services (schools, parks, hospitals, temples) are funded
-      // once per day proportional to staffing. Per-visit government payments
-      // were removed to prevent budget drain (125+ agent visits/tick × large
-      // amounts = unsustainable). Instead, government pays fixed daily wage
-      // coverage: numEmployees × baseSalary × multiplier.
-      // Guard: stops payments when government budget is insufficient.
-      // Subsidy covers employee wages at average grade 2 (Менеджер, ×2.0 base).
-      // school/park: fully public-funded → 2.2× base covers grade-2 wages + 10% buffer.
-      // hospital: partial (patients also pay) → 1.0× covers grade-1 wages.
-      // temple: partial (visitors also pay) → 1.0× covers grade-1 wages.
+      // ── Daily flat subsidy for public services ────────────────────────────
+      // All public services (schools, parks, hospitals, temples) receive a
+      // fixed per-employee subsidy once per game day.
+      //   school / park   → 2.2× baseSalary covers grade-1 wages + 120% buffer
+      //                     (free services, fully state-funded)
+      //   hospital / temple → 1.0× baseSalary covers grade-1 wages
+      //                     (patients/visitors cover the remainder)
+      // Floor: each building receives at least baseSalary/day even when empty,
+      // so that an understaffed building can slowly recover its balance while
+      // recruitment proceeds.
+      // Guard: stops payments when government budget is insufficient; partial
+      // payment made when budget is between 0 and the required amount.
       const PUBLIC_SUBSIDY_MULTIPLIER: Record<string, number> = {
         school:   2.2,
         park:     2.2,
@@ -1900,13 +1940,17 @@ class SimulationEngine {
       for (const biz of this.businesses.values()) {
         const multiplier = PUBLIC_SUBSIDY_MULTIPLIER[biz.type];
         if (multiplier == null) continue;
-        const minSubsidy = baseSalary * 0.3; // floor for unstaffed buildings
+        const minSubsidy = baseSalary; // 1× base (50/day) floor for unstaffed buildings
         const staffSubsidy = biz.employeeCount * baseSalary * multiplier;
         const subsidy = Math.max(staffSubsidy, minSubsidy);
         if (runningBudget >= subsidy) {
           biz.balance += subsidy;
           runningBudget -= subsidy;
           dailyPublicSubsidy += subsidy;
+        } else if (runningBudget > 0) {
+          biz.balance += runningBudget;
+          dailyPublicSubsidy += runningBudget;
+          runningBudget = 0;
         }
       }
       this.state.totalPublicServicesPaid += dailyPublicSubsidy;
@@ -2845,6 +2889,9 @@ class SimulationEngine {
       unemploymentRate: Math.round(unemploymentRate * 10) / 10,
       governmentBudget: Math.round(this.state.governmentBudget * 100) / 100,
       totalTaxCollected: Math.round(this.state.totalTaxCollected * 100) / 100,
+      totalSubsidiesPaid: Math.round(this.state.totalSubsidiesPaid * 100) / 100,
+      totalPensionPaid: Math.round(this.state.totalPensionPaid * 100) / 100,
+      totalPublicServicesPaid: Math.round(this.state.totalPublicServicesPaid * 100) / 100,
       avgWealth: Math.round(avgWealth * 100) / 100,
     };
   }
