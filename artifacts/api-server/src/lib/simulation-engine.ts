@@ -33,7 +33,7 @@ export interface SimulationConfig {
 
 const DEFAULT_CONFIG: SimulationConfig = {
   taxRate: 0.15,
-  needDecayRate: 5,
+  needDecayRate: 60,
   tickIntervalMs: 60000,
   initialAgents: 1000,
   initialBusinesses: 80,
@@ -469,7 +469,7 @@ class SimulationEngine {
       this.state = {
         tick: row.tick,
         running: row.running,
-        gameHour: row.gameHour,
+        gameHour: 0, // 1 tick = 1 day; gameHour is always 0
         gameDay: row.gameDay,
         // Floor at 0 — negative budgets from old buggy code are reset on restart
         governmentBudget: Math.max(0, row.governmentBudget),
@@ -1120,8 +1120,8 @@ class SimulationEngine {
     const startTime = Date.now();
 
     this.state.tick++;
-    this.state.gameHour = (this.state.gameHour + 1) % 24;
-    if (this.state.gameHour === 0) this.state.gameDay++;
+    this.state.gameDay++;
+    // gameHour stays 0 always — 1 tick = 1 game day
 
     for (const biz of this.businesses.values()) {
       biz.firedThisTick = 0;
@@ -1130,19 +1130,18 @@ class SimulationEngine {
 
     const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength, pensionRate } = this.config;
 
-    const isNewDay = this.state.gameHour === 0;
     const dailyDeaths: number[] = [];
     // Dynamic birth rate: high when far from 1000-agent target, drops at capacity
     const popTarget = 1000;
     const birthRate = this.agents.size < popTarget
       ? Math.max(0.04, 0.08 * (1 - this.agents.size / popTarget)) // 8% → 4% as pop grows
       : 0.003; // maintenance rate above target
-    const plannedBirths = isNewDay ? Math.max(2, Math.round(this.agents.size * birthRate)) : 0;
+    const plannedBirths = Math.max(2, Math.round(this.agents.size * birthRate));
 
     // ── Daily productivity investments ─────────────────────────────────────────
     // Profitable commercial businesses (food/service/retail) auto-invest when
     // balance exceeds threshold: costs 5000 coins per level gained, cap at 20.
-    if (isNewDay) {
+    {
       const INVEST_COST = 5000;
       const INVEST_TYPES = new Set(["food", "service", "retail"]);
       for (const biz of this.businesses.values()) {
@@ -1175,9 +1174,9 @@ class SimulationEngine {
 
     const agentIds = Array.from(this.agents.keys());
 
-    // ── Социальный рейтинг: пересчёт раз в игровой день ────────────────────
+    // ── Социальный рейтинг: пересчёт раз в игровой день (= каждый тик) ──────
     // socialRating = среднее всех шкал дружбы, где агент участвует (A или B)
-    if (isNewDay) {
+    {
       const ratingAcc = new Map<number, { sum: number; count: number }>();
       for (const [agentIdA, relMap] of this.relations) {
         for (const [agentIdB, level] of relMap) {
@@ -1229,33 +1228,31 @@ class SimulationEngine {
       const agent = this.agents.get(agentId);
       if (!agent) continue;
 
-      // Age progression + retirement + death: once per game day
-      if (isNewDay) {
-        agent.age++;
+      // Age progression + retirement + death: every tick (1 tick = 1 day)
+      agent.age++;
 
-        // Retirement: agents at or above 65 who aren't yet retired
-        if (!agent.isRetired && agent.age >= 65) {
-          if (agent.employerId != null) {
-            const oldBiz = this.businesses.get(agent.employerId);
-            if (oldBiz) oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
-            const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
-            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null, duration: tenure }];
-            agent.employerId = null;
-            agent.jobStartTick = null;
-          } else {
-            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
-          }
-          agent.isRetired = true;
+      // Retirement: agents at or above 65 who aren't yet retired
+      if (!agent.isRetired && agent.age >= 65) {
+        if (agent.employerId != null) {
+          const oldBiz = this.businesses.get(agent.employerId);
+          if (oldBiz) oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
+          const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: agent.employerId, businessName: oldBiz?.name ?? null, duration: tenure }];
+          agent.employerId = null;
+          agent.jobStartTick = null;
+        } else {
+          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "retired", businessId: null, businessName: null }];
         }
+        agent.isRetired = true;
+      }
 
-        // Death: retired agents have an age-based daily mortality chance
-        if (agent.isRetired) {
-          const deathChance = Math.min((agent.age - 64) * 0.005, 0.5);
-          if (Math.random() < deathChance) {
-            dailyDeaths.push(agentId);
-            dbgSkipped++;
-            continue; // skip all further processing for this agent
-          }
+      // Death: retired agents have an age-based daily mortality chance
+      if (agent.isRetired) {
+        const deathChance = Math.min((agent.age - 64) * 0.005, 0.5);
+        if (Math.random() < deathChance) {
+          dailyDeaths.push(agentId);
+          dbgSkipped++;
+          continue; // skip all further processing for this agent
         }
       }
 
@@ -1266,8 +1263,8 @@ class SimulationEngine {
         continue;
       }
 
-      // Pension: once per game day only (not every tick)
-      if (isNewDay && agent.isRetired) {
+      // Pension: once per game day (1 tick = 1 day)
+      if (agent.isRetired) {
         const pensionAmount = baseSalary * pensionRate;
         if (runningBudget >= pensionAmount) {
           agent.money += pensionAmount;
@@ -1279,9 +1276,8 @@ class SimulationEngine {
       }
 
       // ── Daily payroll ─────────────────────────────────────────────────────
-      // Salary is paid ONCE per game day (not every tick). This keeps business
-      // wage costs predictable: 1 employee costs baseSalary per day, not per tick.
-      if (isNewDay && !agent.isRetired && agent.employerId != null) {
+      // Salary is paid once per day (1 tick = 1 day).
+      if (!agent.isRetired && agent.employerId != null) {
         const payBiz = this.businesses.get(agent.employerId);
         if (payBiz) {
           const salary = calcSalary(baseSalary, agent.careerLevel);
@@ -1349,7 +1345,7 @@ class SimulationEngine {
           m.set(toGrade, (m.get(toGrade) ?? 0) + 1);
         };
 
-        if (agent.careerLevel < careerTarget && agent.employerId != null && employerBiz != null && tenure >= 120) {
+        if (agent.careerLevel < careerTarget && agent.employerId != null && employerBiz != null && tenure >= 5) {
           const toGrade = agent.careerLevel + 1;
           const canPromote = hasVacancy(agent.employerId, employerBiz.type, toGrade);
 
@@ -1357,7 +1353,7 @@ class SimulationEngine {
             // Ambition-driven promotion attempt.
             // Интеллект даёт бонус: intel=50→+0%, intel=90→+0.4%.
             const intelligenceBonus = ((agent.intelligence ?? 50) - 50) * 0.0001;
-            const promotionProb = (agent.ambition / 100) * 0.005 + intelligenceBonus;
+            const promotionProb = (agent.ambition / 100) * 0.05 + intelligenceBonus;
             if (Math.random() < promotionProb) {
               recordPromotion(agent.employerId, agent.careerLevel, toGrade);
               agent.careerLevel = toGrade;
@@ -1368,7 +1364,7 @@ class SimulationEngine {
               agent.money += agent.careerLevel * rand(8, 15);
               agent.mood = clamp(agent.mood + rand(5, 12));
             }
-          } else if (availableBusinessIds.length > 1 && Math.random() < 0.035) {
+          } else if (availableBusinessIds.length > 1 && Math.random() < 0.40) {
             // Нет вакансии — ищет работу с возможностью роста в другом бизнесе.
             const candidates = availableBusinessIds.filter(id => id !== agent.employerId);
             if (candidates.length > 0) {
@@ -1394,7 +1390,7 @@ class SimulationEngine {
             }
           }
         } else if (agent.careerLevel >= careerTarget && agent.employerId != null && employerBiz != null
-            && tenure >= 200 && agent.careerLevel < 5 && Math.random() < 0.002) {
+            && tenure >= 8 && agent.careerLevel < 5 && Math.random() < 0.03) {
           // Исключительное повышение сверхрезультативных сотрудников — тоже требует вакансии.
           const toGrade = agent.careerLevel + 1;
           if (hasVacancy(agent.employerId, employerBiz.type, toGrade)) {
@@ -1412,7 +1408,7 @@ class SimulationEngine {
 
       // Job seeking: unemployed, non-retired agents have a 30% chance to find work.
       // Найм разрешён только если в бизнесе есть вакансия на текущем грейде агента.
-      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.30) {
+      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.85) {
         const eligibleBizIds = availableBusinessIds.filter(bizId => {
           const biz = this.businesses.get(bizId);
           if (!biz) return false;
@@ -1871,8 +1867,8 @@ class SimulationEngine {
       ); // коэффициенты сумма = 1.12 → небольшое масштабирование вверх при хороших нуждах
       agent.mood = clamp(agent.mood + (moodTarget - agent.mood) * 0.025);
 
-      // Subsidy: once per game day only, capped at subsidyAmount per day
-      if (isNewDay && agent.money <= 10 && runningBudget >= subsidyAmount) {
+      // Subsidy: once per game day (1 tick = 1 day)
+      if (agent.money <= 10 && runningBudget >= subsidyAmount) {
         agent.money += subsidyAmount;
         subsidiesPaid += subsidyAmount;
         runningBudget -= subsidyAmount;
@@ -1905,37 +1901,35 @@ class SimulationEngine {
     this.state.totalPensionPaid += pensionPaid;
     this.state.totalPublicServicesPaid += publicServiceSpend;
 
-    // Process daily lifecycle: remove dead agents, spawn newborns
-    if (isNewDay) {
-      if (dailyDeaths.length > 0) {
-        for (const deadId of dailyDeaths) {
-          const deadAgent = this.agents.get(deadId);
-          if (!deadAgent) continue;
-          // Employer headcount
-          if (deadAgent.employerId) {
-            const biz = this.businesses.get(deadAgent.employerId);
-            if (biz) biz.employeeCount = Math.max(0, biz.employeeCount - 1);
-          }
-          // Remove from memory
-          this.agents.delete(deadId);
-          this.relations.delete(deadId);
-          for (const relMap of this.relations.values()) relMap.delete(deadId);
-          this.dirtyRelations.delete(`${deadId}:`);
+    // Process daily lifecycle: remove dead agents, spawn newborns (every tick = 1 day)
+    if (dailyDeaths.length > 0) {
+      for (const deadId of dailyDeaths) {
+        const deadAgent = this.agents.get(deadId);
+        if (!deadAgent) continue;
+        // Employer headcount
+        if (deadAgent.employerId) {
+          const biz = this.businesses.get(deadAgent.employerId);
+          if (biz) biz.employeeCount = Math.max(0, biz.employeeCount - 1);
         }
-        this.lastDeaths = dailyDeaths.length;
-        await this.purgeDeadAgents(dailyDeaths);
-        logger.info({ count: dailyDeaths.length, population: this.agents.size }, "Agents died");
-      } else if (isNewDay) {
-        this.lastDeaths = 0;
+        // Remove from memory
+        this.agents.delete(deadId);
+        this.relations.delete(deadId);
+        for (const relMap of this.relations.values()) relMap.delete(deadId);
+        this.dirtyRelations.delete(`${deadId}:`);
       }
+      this.lastDeaths = dailyDeaths.length;
+      await this.purgeDeadAgents(dailyDeaths);
+      logger.info({ count: dailyDeaths.length, population: this.agents.size }, "Agents died");
+    } else {
+      this.lastDeaths = 0;
+    }
 
-      if (plannedBirths > 0) {
-        this.lastBirths = plannedBirths;
-        await this.spawnNewAgents(plannedBirths);
-        logger.info({ count: plannedBirths, population: this.agents.size }, "New agents born");
-      } else if (isNewDay) {
-        this.lastBirths = 0;
-      }
+    if (plannedBirths > 0) {
+      this.lastBirths = plannedBirths;
+      await this.spawnNewAgents(plannedBirths);
+      logger.info({ count: plannedBirths, population: this.agents.size }, "New agents born");
+    } else {
+      this.lastBirths = 0;
     }
 
     const prevGoodPrices = new Map(Array.from(this.goods.entries()).map(([id, g]) => [id, g.currentPrice]));
@@ -1943,8 +1937,8 @@ class SimulationEngine {
     this.updateGoodPrices();
     await this.updateBusinesses();
 
-    // Corporate tax: once per game day, 5% of profitable business balance
-    if (isNewDay) {
+    // Corporate tax: 5% of profitable business balance per day (every tick)
+    {
       let corpTax = 0;
       for (const biz of this.businesses.values()) {
         if (biz.balance > 500) {
