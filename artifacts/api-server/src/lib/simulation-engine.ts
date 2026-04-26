@@ -72,6 +72,7 @@ interface BusinessState extends Business {
   firedThisTick: number;
   hiredThisTick: number;
   ticksUnprofitable: number; // how many consecutive ticks with negative balance
+  hasReceivedBailout: boolean; // one-time survival grant — never paid twice
 }
 
 // Max hiring capacity per business type — derived from the design spec table
@@ -592,7 +593,7 @@ class SimulationEngine {
       }
     }
     for (const b of rows) {
-      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: employeeCounts.get(b.id) ?? 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0, hasReceivedBailout: false });
     }
 
     // Startup cleanup: fire excess employees beyond maxEmployees cap.
@@ -646,7 +647,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0, hasReceivedBailout: false });
     }
 
     const goodInserts = savedBiz.map(b => ({
@@ -702,7 +703,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0, hasReceivedBailout: false });
     }
 
     const goodInserts = savedBiz.map(b => {
@@ -751,7 +752,7 @@ class SimulationEngine {
 
     const savedBiz = await db.insert(businessesTable).values(bizInserts).returning();
     for (const b of savedBiz) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0, hasReceivedBailout: false });
     }
 
     const goodInserts = savedBiz.map(b => {
@@ -850,7 +851,7 @@ class SimulationEngine {
 
     const savedBusinesses = await db.insert(businessesTable).values(businessInserts).returning();
     for (const b of savedBusinesses) {
-      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0 });
+      this.businesses.set(b.id, { ...b, employeeCount: 0, maxEmployees: MAX_EMPLOYEES_BY_TYPE[b.type] ?? 5, firedThisTick: 0, hiredThisTick: 0, ticksUnprofitable: 0, hasReceivedBailout: false });
     }
 
     const foodBusinessIds = savedBusinesses.filter(b => b.type === "food").map(b => b.id);
@@ -2001,6 +2002,14 @@ class SimulationEngine {
       this.state.totalPublicServicesPaid += dailyPublicSubsidy;
       this.state.governmentBudget = runningBudget;
 
+      // ── One-time survival bailouts for distressed commercial businesses ───────
+      // Each eligible business receives this exactly once; amount is modest
+      const bailoutResult = this.processBusinessBailouts();
+      if (bailoutResult.bailoutsIssued > 0) {
+        this.state.totalSubsidiesPaid += bailoutResult.totalSpent;
+      }
+      runningBudget = this.state.governmentBudget; // sync after bailouts deducted
+
       // ── Government business grants ─────────────────────────────────────────
       // When unemployment exceeds threshold and budget allows, fund new businesses
       const grantResult = await this.processGovernmentGrants();
@@ -2565,6 +2574,47 @@ class SimulationEngine {
     }
   }
 
+  /**
+   * One-time government survival bailout for distressed commercial businesses.
+   * Conditions: commercial (food/service), balance below DISTRESS threshold, never received before.
+   * Amount is deliberately modest — enough to give a fighting chance, not a windfall.
+   * Each business can receive this bailout exactly once per simulation run.
+   */
+  private processBusinessBailouts(): { bailoutsIssued: number; totalSpent: number } {
+    const BAILOUT_TYPES    = new Set(["food", "service"]);
+    const DISTRESS_BALANCE = -150;  // balance must be at or below this level to qualify
+    const BAILOUT_AMOUNT   = 800;   // one-time payout — covers ~a few days of operating costs
+    const MAX_PER_DAY      = 5;     // cap to prevent budget drain from simultaneous crises
+
+    if (this.state.governmentBudget < BAILOUT_AMOUNT) {
+      return { bailoutsIssued: 0, totalSpent: 0 };
+    }
+
+    let bailoutsIssued = 0;
+    let totalSpent = 0;
+
+    for (const biz of this.businesses.values()) {
+      if (bailoutsIssued >= MAX_PER_DAY) break;
+      if (!BAILOUT_TYPES.has(biz.type)) continue;
+      if (biz.hasReceivedBailout) continue;
+      if (biz.balance > DISTRESS_BALANCE) continue;
+      if (this.state.governmentBudget < BAILOUT_AMOUNT) break;
+
+      biz.balance += BAILOUT_AMOUNT;
+      biz.hasReceivedBailout = true;
+      this.state.governmentBudget -= BAILOUT_AMOUNT;
+      bailoutsIssued++;
+      totalSpent += BAILOUT_AMOUNT;
+
+      logger.info(
+        { bizId: biz.id, bizName: biz.name, balanceAfter: Math.round(biz.balance), bailoutAmount: BAILOUT_AMOUNT },
+        "One-time government survival bailout issued"
+      );
+    }
+
+    return { bailoutsIssued, totalSpent };
+  }
+
   private async processGovernmentGrants(): Promise<{ grantsIssued: number; totalSpent: number }> {
     const GRANT_AMOUNT = 3000;
     const MAX_GRANTS_PER_DAY = 8; // raised: 3→8 to recover faster from mass bankruptcy waves
@@ -2680,6 +2730,7 @@ class SimulationEngine {
         firedThisTick: 0,
         hiredThisTick: 1,
         ticksUnprofitable: 0,
+        hasReceivedBailout: false,
       });
 
       // Use demand signal as starting demand for the new good
