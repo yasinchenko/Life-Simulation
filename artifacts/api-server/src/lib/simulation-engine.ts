@@ -1608,8 +1608,8 @@ class SimulationEngine {
           dbgMoneyOut += hospitalGood.currentPrice;
           dbgSuccessful++;
         } else {
-          // No hospital available or can't afford → rest at home (less sleep recovery than proper sleep)
-          agent.needs.sleep = clamp(agent.needs.sleep + rand(1, 3));
+          // No hospital available or can't afford → rest at home (slower sleep recovery than proper sleep)
+          agent.needs.sleep = clamp(agent.needs.sleep + rand(3, 5));
           agent.needs.comfort = clamp(agent.needs.comfort + rand(5, 12));
           agent.needs.health = clamp(agent.needs.health + 0.3);
           agent.currentAction = "rest";
@@ -2238,8 +2238,10 @@ class SimulationEngine {
   }
 
   private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number; socialRating: number; wellbeing: number }): string {
-    // Priority 1-4: critical physical needs — thresholds ensure frequent service usage
-    if (needs.health < 80) return "health";            // raised: 80 = agents visit hospital regularly for maintenance
+    // Priority 0: extreme exhaustion overrides everything — humans fall asleep standing up
+    if (needs.sleep < 20) return "sleep";
+    // Priority 1-4: critical physical needs
+    if (needs.health < 45) return "health";            // only truly ill agents rush to hospital
     if (needs.sleep < 45) return "sleep";
     if (needs.hunger < 55) return "hunger";
     // Priority 5-7: safety needs (trigger before social/entertainment)
