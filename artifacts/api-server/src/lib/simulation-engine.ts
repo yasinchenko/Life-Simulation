@@ -110,11 +110,13 @@ const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = Object.fromEntries(
 // the STAFFING_TABLE (e.g. hospital grade-5 slots = 0, grade-4 = 1 Director).
 const PUBLIC_SECTOR_TYPES = new Set(["school", "park", "hospital", "temple"]);
 
-// Fixed one-time costs to open a new commercial business (paid from agent savings or government grant).
-// Reflects capital investment needed: food requires more equipment than service.
+// Fixed one-time costs to open a new business (paid from agent savings or government grant).
+// Raw producers cost more (land, equipment) while service businesses are cheapest to start.
 const BUSINESS_LAUNCH_COSTS: Record<string, number> = {
-  food:    2000,
-  service: 1500,
+  farm:     1800,
+  workshop: 2200,
+  food:     2000,
+  service:  1500,
 };
 
 interface GoodState extends Good {}
@@ -2625,47 +2627,63 @@ class SimulationEngine {
   }
 
   // ── Niche scoring ─────────────────────────────────────────────────────
-  // Computes a composite "success probability" score for every food/service niche.
-  // Score = 60% market gap (demand/supply) + 40% resident need (unmet hunger/comfort).
-  // Higher score → better chances of survival → more attractive to both agents and government.
+  // Computes a composite "success probability" score for EVERY openable good niche:
+  // farm (raw food), workshop (raw materials), food (processed), service.
+  // Score = 60% market gap (demand/supply) + 40% resident need signal.
+  // Higher score → more unmet demand → agent/government should open this type of business.
   private computeNicheScores(): Array<{
     name: string;
-    bizType: "food" | "service";
+    bizType: "farm" | "workshop" | "food" | "service";
     basePrice: number;
     marketRatio: number;  // raw demand / supply
     needScore: number;    // 0–1: fraction of unmet resident need for this category
     successScore: number; // composite 0–1
   }> {
+    // Map from good name → which business type produces it
+    const GOOD_TYPE_MAP = new Map<string, "farm" | "workshop" | "food" | "service">([
+      ...RAW_FOOD_GOOD_NAMES.map(n  => [n, "farm"]     as const),
+      ...RAW_MATERIAL_GOOD_NAMES.map(n => [n, "workshop"] as const),
+      ...FOOD_GOOD_NAMES.map(n      => [n, "food"]     as const),
+      ...SERVICE_GOOD_NAMES.map(n   => [n, "service"]  as const),
+    ]);
+
     // ── Step 1: aggregate demand/supply per good name ──────────────────
-    const nicheDemand = new Map<string, { totalDemand: number; totalSupply: number; bizType: "food" | "service"; basePrice: number }>();
+    const OPENABLE = new Set<string>(["farm", "workshop", "food", "service"]);
+    const nicheDemand = new Map<string, { totalDemand: number; totalSupply: number; bizType: "farm" | "workshop" | "food" | "service"; basePrice: number }>();
     for (const good of this.goods.values()) {
       const biz = good.businessId != null ? this.businesses.get(good.businessId) : null;
-      if (!biz || (biz.type !== "food" && biz.type !== "service")) continue;
+      if (!biz || !OPENABLE.has(biz.type)) continue;
       const prev = nicheDemand.get(good.name);
       if (prev) {
         prev.totalDemand += good.demand;
         prev.totalSupply += good.supply;
       } else {
+        const bizType = GOOD_TYPE_MAP.get(good.name) ?? (biz.type as "farm" | "workshop" | "food" | "service");
         nicheDemand.set(good.name, {
           totalDemand: good.demand, totalSupply: good.supply,
-          bizType: biz.type as "food" | "service", basePrice: good.basePrice,
+          bizType, basePrice: good.basePrice,
         });
       }
     }
     // Add completely unserved niches with latent demand
-    for (const gn of [...FOOD_GOOD_NAMES, ...SERVICE_GOOD_NAMES]) {
+    for (const [gn, bt] of GOOD_TYPE_MAP.entries()) {
       if (!nicheDemand.has(gn)) {
-        const isFood = FOOD_GOOD_NAMES.includes(gn);
+        const isFarm = bt === "farm";
+        const isWorkshop = bt === "workshop";
         nicheDemand.set(gn, {
-          totalDemand: 50, totalSupply: 1,
-          bizType: isFood ? "food" : "service",
-          basePrice: isFood ? this.config.baseFoodPrice : this.config.baseFoodPrice * 1.5,
+          totalDemand: 50, totalSupply: 1, bizType: bt,
+          basePrice: isFarm
+            ? this.config.baseFoodPrice * 0.5
+            : isWorkshop
+              ? this.config.baseFoodPrice * 0.8
+              : this.config.baseFoodPrice * (bt === "food" ? 1.0 : 1.5),
         });
       }
     }
 
     // ── Step 2: resident need scores ──────────────────────────────────
-    // needScore: 1 = residents are starving / very uncomfortable; 0 = fully satisfied
+    // needScore: 1 = critical unmet need; 0 = fully satisfied
+    // Raw producers feed into food chains → their need signal mirrors food need.
     const activeAgents = Array.from(this.agents.values()).filter(a => !a.isRetired);
     const n = activeAgents.length || 1;
     const avgHunger  = activeAgents.reduce((s, a) => s + a.needs.hunger,  0) / n;
@@ -2676,9 +2694,12 @@ class SimulationEngine {
     // ── Step 3: composite success score ──────────────────────────────
     return Array.from(nicheDemand.entries())
       .map(([name, data]) => {
-        const marketRatio  = data.totalDemand / Math.max(data.totalSupply, 1);
-        const needScore    = data.bizType === "food" ? foodNeedScore : serviceNeedScore;
-        // Normalise market ratio: 0 at ratio=0, 1 at ratio≥3 (triple unmet demand)
+        const marketRatio = data.totalDemand / Math.max(data.totalSupply, 1);
+        // Farm/food goods both satisfy hunger; workshop/service goods satisfy comfort
+        const needScore = (data.bizType === "farm" || data.bizType === "food")
+          ? foodNeedScore
+          : serviceNeedScore;
+        // Normalise market ratio: 1.0 at ratio≥3 (triple unmet demand)
         const normalised   = Math.min(marketRatio / 3, 1);
         const successScore = normalised * 0.6 + needScore * 0.4;
         return { name, ...data, marketRatio, needScore, successScore };
@@ -2724,13 +2745,19 @@ class SimulationEngine {
       startingBalance: number,
     ) => {
       const bizCount = Array.from(this.businesses.values()).filter(b => b.type === niche.bizType).length;
-      const bizName  = niche.bizType === "food"
-        ? `${pick(FOOD_BUSINESS_NAMES)} №${bizCount + 1}`
-        : `${pick(SERVICE_BUSINESS_NAMES)} №${bizCount + 1}`;
+      const bizName =
+        niche.bizType === "food"     ? `${pick(FOOD_BUSINESS_NAMES)}     №${bizCount + 1}` :
+        niche.bizType === "service"  ? `${pick(SERVICE_BUSINESS_NAMES)}  №${bizCount + 1}` :
+        niche.bizType === "farm"     ? `${pick(FARM_BUSINESS_NAMES)}     №${bizCount + 1}` :
+        /* workshop */                 `${pick(WORKSHOP_BUSINESS_NAMES)} №${bizCount + 1}`;
+
+      // Raw producers (farm/workshop) have higher base production rate
+      const prodRate = (niche.bizType === "farm" || niche.bizType === "workshop")
+        ? rand(6, 15) : rand(4, 12);
 
       const [newBiz] = await db.insert(businessesTable).values({
-        name: bizName, type: niche.bizType, balance: startingBalance,
-        productionRate: rand(4, 12), ownerId: agent.id, productivityLevel: 0,
+        name: bizName.trim(), type: niche.bizType, balance: startingBalance,
+        productionRate: prodRate, ownerId: agent.id, productivityLevel: 0,
       }).returning();
       this.businesses.set(newBiz.id, {
         ...newBiz, employeeCount: 1, maxEmployees: MAX_EMPLOYEES_BY_TYPE[newBiz.type] ?? 5,
