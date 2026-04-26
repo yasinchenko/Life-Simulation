@@ -2685,8 +2685,10 @@ class SimulationEngine {
     }
 
     // ── Step 2: resident need scores ──────────────────────────────────
-    // needScore: 1 = critical unmet need; 0 = fully satisfied
-    // Raw producers feed into food chains → their need signal mirrors food need.
+    // needScore reflects how much FINAL consumers need this type of good.
+    // farms/workshops produce B2B raw materials — residents don't buy them directly,
+    // so their need signal is 0 (raw good success = pure market ratio only).
+    // food/service businesses sell directly to residents → resident needs apply.
     const activeAgents = Array.from(this.agents.values()).filter(a => !a.isRetired);
     const n = activeAgents.length || 1;
     const avgHunger  = activeAgents.reduce((s, a) => s + a.needs.hunger,  0) / n;
@@ -2698,13 +2700,18 @@ class SimulationEngine {
     return Array.from(nicheDemand.entries())
       .map(([name, data]) => {
         const marketRatio = data.totalDemand / Math.max(data.totalSupply, 1);
-        // Farm/food goods both satisfy hunger; workshop/service goods satisfy comfort
-        const needScore = (data.bizType === "farm" || data.bizType === "food")
-          ? foodNeedScore
-          : serviceNeedScore;
-        // Normalise market ratio: 1.0 at ratio≥3 (triple unmet demand)
-        const normalised   = Math.min(marketRatio / 3, 1);
-        const successScore = normalised * 0.6 + needScore * 0.4;
+        // Raw (B2B) goods: score = 100% market gap (no resident need signal)
+        // Consumer goods: score = 60% market gap + 40% resident need
+        let needScore: number;
+        let successScore: number;
+        if (data.bizType === "farm" || data.bizType === "workshop") {
+          needScore = 0; // raw materials don't map to resident hunger/comfort directly
+          successScore = Math.min(marketRatio / 3, 1); // pure market ratio, capped at 1
+        } else {
+          needScore = data.bizType === "food" ? foodNeedScore : serviceNeedScore;
+          const normalised = Math.min(marketRatio / 3, 1);
+          successScore = normalised * 0.6 + needScore * 0.4;
+        }
         return { name, ...data, marketRatio, needScore, successScore };
       })
       .sort((a, b) => b.successScore - a.successScore);
@@ -2723,8 +2730,8 @@ class SimulationEngine {
    */
   private async processBusinessOpenings(): Promise<{ selfFunded: number; govFunded: number; totalSpent: number }> {
     const MAX_SELF_FUNDED      = 3;    // cap per game day to avoid sudden market floods
-    const MAX_GOV_FUNDED       = 5;    // cap per game day
-    const GOV_THRESHOLD        = 0.30; // minimum successScore for government to approve
+    const MAX_GOV_FUNDED       = 2;    // reduced: government is selective and cash-constrained
+    const GOV_THRESHOLD        = 0.55; // raised: only fund niches with strong genuine demand
     const SELF_AMBITION_MIN    = 55;   // agent must be ambitious enough to start a business
     const SELF_INTEL_MIN       = 40;   // agent must have enough intelligence
     const SELF_INITIATIVE_RATE = 0.05; // 5% daily chance per eligible agent
@@ -2815,8 +2822,10 @@ class SimulationEngine {
     const eligibleNiches = niches.filter(n => n.successScore >= GOV_THRESHOLD);
     if (eligibleNiches.length === 0) return { selfFunded, govFunded, totalSpent };
 
-    const minCost = Math.min(...Object.values(BUSINESS_LAUNCH_COSTS));
-    if (this.state.governmentBudget < minCost * 2) return { selfFunded, govFunded, totalSpent };
+    // Government must maintain a meaningful reserve before issuing grants
+    // (covers ~2 days of pensions + public service funding)
+    const GRANT_BUDGET_RESERVE = 40_000;
+    if (this.state.governmentBudget < GRANT_BUDGET_RESERVE) return { selfFunded, govFunded, totalSpent };
 
     // Grant candidates: unemployed agents who don't have enough savings to self-fund
     const grantCandidates = Array.from(this.agents.values())
