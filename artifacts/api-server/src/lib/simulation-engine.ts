@@ -110,6 +110,13 @@ const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = Object.fromEntries(
 // the STAFFING_TABLE (e.g. hospital grade-5 slots = 0, grade-4 = 1 Director).
 const PUBLIC_SECTOR_TYPES = new Set(["school", "park", "hospital", "temple"]);
 
+// Fixed one-time costs to open a new commercial business (paid from agent savings or government grant).
+// Reflects capital investment needed: food requires more equipment than service.
+const BUSINESS_LAUNCH_COSTS: Record<string, number> = {
+  food:    2000,
+  service: 1500,
+};
+
 interface GoodState extends Good {}
 
 interface SimState {
@@ -2010,11 +2017,13 @@ class SimulationEngine {
       }
       runningBudget = this.state.governmentBudget; // sync after bailouts deducted
 
-      // ── Government business grants ─────────────────────────────────────────
-      // When unemployment exceeds threshold and budget allows, fund new businesses
-      const grantResult = await this.processGovernmentGrants();
-      this.totalGrantsPaid += grantResult.totalSpent;
-      this.lastGrantsIssued = grantResult.grantsIssued;
+      // ── Business openings: self-funded + government grants ────────────────
+      // Self-funded: ambitious agents with savings open on their own initiative.
+      // Gov-funded:  unemployed agents apply; government approves based on
+      //              resident needs (hunger/comfort) + market gap + budget.
+      const openingResult = await this.processBusinessOpenings();
+      this.totalGrantsPaid  += openingResult.totalSpent;
+      this.lastGrantsIssued  = openingResult.govFunded + openingResult.selfFunded;
       runningBudget = this.state.governmentBudget; // sync after grants deducted
     }
 
@@ -2615,158 +2624,212 @@ class SimulationEngine {
     return { bailoutsIssued, totalSpent };
   }
 
-  private async processGovernmentGrants(): Promise<{ grantsIssued: number; totalSpent: number }> {
-    const GRANT_AMOUNT = 3000;
-    const MAX_GRANTS_PER_DAY = 8; // raised: 3→8 to recover faster from mass bankruptcy waves
-    const UNEMPLOYMENT_THRESHOLD = 0.28; // 28% unemployment triggers grants
-
-    if (this.state.governmentBudget < GRANT_AMOUNT * 2) {
-      return { grantsIssued: 0, totalSpent: 0 };
-    }
-
-    const workingAge = Array.from(this.agents.values()).filter(
-      a => !a.isRetired && a.age >= 18 && a.age <= 65
-    );
-    const unemployed = workingAge.filter(a => a.employerId == null);
-    const unemploymentRate = workingAge.length > 0 ? unemployed.length / workingAge.length : 0;
-
-    if (unemploymentRate < UNEMPLOYMENT_THRESHOLD) {
-      return { grantsIssued: 0, totalSpent: 0 };
-    }
-
-    // Pick candidates: unemployed, not jailed, sorted by lowest money then highest ambition
-    // No strict money cap — any unemployed agent can receive a grant to open a business
-    const candidates = unemployed
-      .filter(a => a.jailedUntilTick == null && a.money < 8000)
-      .sort((a, b) => {
-        if (a.money !== b.money) return a.money - b.money; // poorest first
-        return (b.ambition ?? 50) - (a.ambition ?? 50);
-      })
-      .slice(0, MAX_GRANTS_PER_DAY);
-
-    if (candidates.length === 0) return { grantsIssued: 0, totalSpent: 0 };
-
-    // ── Market demand analysis ─────────────────────────────────────────────
-    // Aggregate demand and supply per good name across all consumer goods
-    // This tells us WHICH specific niche has the most unmet demand
+  // ── Niche scoring ─────────────────────────────────────────────────────
+  // Computes a composite "success probability" score for every food/service niche.
+  // Score = 60% market gap (demand/supply) + 40% resident need (unmet hunger/comfort).
+  // Higher score → better chances of survival → more attractive to both agents and government.
+  private computeNicheScores(): Array<{
+    name: string;
+    bizType: "food" | "service";
+    basePrice: number;
+    marketRatio: number;  // raw demand / supply
+    needScore: number;    // 0–1: fraction of unmet resident need for this category
+    successScore: number; // composite 0–1
+  }> {
+    // ── Step 1: aggregate demand/supply per good name ──────────────────
     const nicheDemand = new Map<string, { totalDemand: number; totalSupply: number; bizType: "food" | "service"; basePrice: number }>();
     for (const good of this.goods.values()) {
       const biz = good.businessId != null ? this.businesses.get(good.businessId) : null;
       if (!biz || (biz.type !== "food" && biz.type !== "service")) continue;
-      const key = good.name;
-      const prev = nicheDemand.get(key);
+      const prev = nicheDemand.get(good.name);
       if (prev) {
         prev.totalDemand += good.demand;
         prev.totalSupply += good.supply;
       } else {
-        nicheDemand.set(key, {
-          totalDemand: good.demand,
-          totalSupply: good.supply,
-          bizType: biz.type as "food" | "service",
-          basePrice: good.basePrice,
+        nicheDemand.set(good.name, {
+          totalDemand: good.demand, totalSupply: good.supply,
+          bizType: biz.type as "food" | "service", basePrice: good.basePrice,
         });
       }
     }
-
-    // Score each niche: high demand + low supply = hot niche worth entering
-    // Also add known good names that have zero existing businesses (totally unserved)
+    // Add completely unserved niches with latent demand
     for (const gn of [...FOOD_GOOD_NAMES, ...SERVICE_GOOD_NAMES]) {
       if (!nicheDemand.has(gn)) {
         const isFood = FOOD_GOOD_NAMES.includes(gn);
         nicheDemand.set(gn, {
-          totalDemand: 50, // assume decent latent demand for unserved niches
-          totalSupply: 1,  // minimal supply
+          totalDemand: 50, totalSupply: 1,
           bizType: isFood ? "food" : "service",
           basePrice: isFood ? this.config.baseFoodPrice : this.config.baseFoodPrice * 1.5,
         });
       }
     }
 
-    // Sort niches by demand/supply ratio descending (highest unmet demand first)
-    // Include all niches — even oversupplied ones are eligible when unemployment is high
-    const sortedNiches = Array.from(nicheDemand.entries())
-      .map(([name, data]) => ({
-        name,
-        ...data,
-        ratio: data.totalDemand / Math.max(data.totalSupply, 1),
-      }))
-      .sort((a, b) => b.ratio - a.ratio);
+    // ── Step 2: resident need scores ──────────────────────────────────
+    // needScore: 1 = residents are starving / very uncomfortable; 0 = fully satisfied
+    const activeAgents = Array.from(this.agents.values()).filter(a => !a.isRetired);
+    const n = activeAgents.length || 1;
+    const avgHunger  = activeAgents.reduce((s, a) => s + a.needs.hunger,  0) / n;
+    const avgComfort = activeAgents.reduce((s, a) => s + a.needs.comfort, 0) / n;
+    const foodNeedScore    = clamp(1 - avgHunger  / 100, 0, 1);
+    const serviceNeedScore = clamp(1 - avgComfort / 100, 0, 1);
 
-    let grantsIssued = 0;
-    let totalSpent = 0;
-    const { baseFoodPrice } = this.config;
+    // ── Step 3: composite success score ──────────────────────────────
+    return Array.from(nicheDemand.entries())
+      .map(([name, data]) => {
+        const marketRatio  = data.totalDemand / Math.max(data.totalSupply, 1);
+        const needScore    = data.bizType === "food" ? foodNeedScore : serviceNeedScore;
+        // Normalise market ratio: 0 at ratio=0, 1 at ratio≥3 (triple unmet demand)
+        const normalised   = Math.min(marketRatio / 3, 1);
+        const successScore = normalised * 0.6 + needScore * 0.4;
+        return { name, ...data, marketRatio, needScore, successScore };
+      })
+      .sort((a, b) => b.successScore - a.successScore);
+  }
 
-    for (const agent of candidates) {
-      if (this.state.governmentBudget < GRANT_AMOUNT) break;
+  /**
+   * Business opening logic — two independent pathways:
+   *
+   * 1. Self-funded: agent with savings + ambition opens a business using their own money.
+   *    Niche is selected by highest successScore (best market opportunity).
+   *
+   * 2. Government-funded: unemployed agent applies for a grant.
+   *    Government approves only when successScore ≥ threshold AND budget allows.
+   *    Approval criteria reflect BOTH market gap AND current resident needs —
+   *    government will not fund a niche that residents don't actually need.
+   */
+  private async processBusinessOpenings(): Promise<{ selfFunded: number; govFunded: number; totalSpent: number }> {
+    const MAX_SELF_FUNDED      = 3;    // cap per game day to avoid sudden market floods
+    const MAX_GOV_FUNDED       = 5;    // cap per game day
+    const GOV_THRESHOLD        = 0.30; // minimum successScore for government to approve
+    const SELF_AMBITION_MIN    = 55;   // agent must be ambitious enough to start a business
+    const SELF_INTEL_MIN       = 40;   // agent must have enough intelligence
+    const SELF_INITIATIVE_RATE = 0.05; // 5% daily chance per eligible agent
 
-      // Pick the hottest niche (rotate through top niches to avoid saturation)
-      const nicheIndex = grantsIssued % Math.min(sortedNiches.length, 5);
-      const targetNiche = sortedNiches[nicheIndex] ?? {
-        name: pick(FOOD_GOOD_NAMES),
-        bizType: "food" as const,
-        basePrice: baseFoodPrice,
-        ratio: 1,
-      };
+    const niches = this.computeNicheScores();
+    if (niches.length === 0) return { selfFunded: 0, govFunded: 0, totalSpent: 0 };
 
-      const bizType = targetNiche.bizType;
-      const bizCount = Array.from(this.businesses.values()).filter(b => b.type === bizType).length;
-      const bizName = bizType === "food"
+    // Set of agents who already own at least one business (skip them)
+    const existingOwnerIds = new Set(
+      Array.from(this.businesses.values())
+        .filter(b => b.ownerId != null)
+        .map(b => b.ownerId as number)
+    );
+
+    let selfFunded = 0, govFunded = 0, totalSpent = 0;
+
+    // Helper: create the business + good in DB and register in memory
+    const openBusiness = async (
+      agent: AgentState,
+      niche: ReturnType<typeof this.computeNicheScores>[number],
+      startingBalance: number,
+    ) => {
+      const bizCount = Array.from(this.businesses.values()).filter(b => b.type === niche.bizType).length;
+      const bizName  = niche.bizType === "food"
         ? `${pick(FOOD_BUSINESS_NAMES)} №${bizCount + 1}`
         : `${pick(SERVICE_BUSINESS_NAMES)} №${bizCount + 1}`;
 
       const [newBiz] = await db.insert(businessesTable).values({
-        name: bizName,
-        type: bizType,
-        balance: GRANT_AMOUNT,
-        productionRate: rand(4, 12),
-        ownerId: agent.id,
-        productivityLevel: 0,
+        name: bizName, type: niche.bizType, balance: startingBalance,
+        productionRate: rand(4, 12), ownerId: agent.id, productivityLevel: 0,
       }).returning();
-
       this.businesses.set(newBiz.id, {
-        ...newBiz,
-        employeeCount: 1,
-        maxEmployees: MAX_EMPLOYEES_BY_TYPE[newBiz.type] ?? 5,
-        firedThisTick: 0,
-        hiredThisTick: 1,
-        ticksUnprofitable: 0,
-        hasReceivedBailout: false,
+        ...newBiz, employeeCount: 1, maxEmployees: MAX_EMPLOYEES_BY_TYPE[newBiz.type] ?? 5,
+        firedThisTick: 0, hiredThisTick: 1, ticksUnprofitable: 0, hasReceivedBailout: false,
       });
 
-      // Use demand signal as starting demand for the new good
-      const initialDemand = clamp(Math.round(targetNiche.ratio * 20), 20, 80);
-      const goodPrice = targetNiche.basePrice;
+      const initialDemand = clamp(Math.round(niche.marketRatio * 20), 20, 80);
       const [newGood] = await db.insert(goodsTable).values({
-        name: targetNiche.name,
-        businessId: newBiz.id,
-        basePrice: goodPrice,
-        currentPrice: goodPrice * (1 + this.config.priceMarkup),
-        quality: rand(40, 70),
-        demand: initialDemand,
-        supply: rand(10, 25), // start with low supply to meet real demand
+        name: niche.name, businessId: newBiz.id,
+        basePrice: niche.basePrice,
+        currentPrice: niche.basePrice * (1 + this.config.priceMarkup),
+        quality: rand(40, 70), demand: initialDemand, supply: rand(10, 25),
       }).returning();
       this.goods.set(newGood.id, { ...newGood });
 
-      agent.employerId = newBiz.id;
+      agent.employerId   = newBiz.id;
       agent.jobStartTick = this.state.tick;
-      agent.jobHistory = [
-        ...agent.jobHistory,
-        { tick: this.state.tick, event: "hired", businessId: newBiz.id, businessName: bizName },
-      ];
-      agent.money += 200; // small cash stipend alongside the grant
+      agent.jobHistory   = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBiz.id, businessName: bizName }];
+      existingOwnerIds.add(agent.id);
+      return bizName;
+    };
 
-      this.state.governmentBudget -= GRANT_AMOUNT;
-      grantsIssued++;
-      totalSpent += GRANT_AMOUNT;
+    // ── Stage 1: Self-funded openings ─────────────────────────────────
+    const selfCandidates = Array.from(this.agents.values()).filter(a =>
+      !a.isRetired &&
+      a.age >= 25 && a.age <= 55 &&
+      a.jailedUntilTick == null &&
+      !existingOwnerIds.has(a.id) &&
+      (a.ambition     ?? 50) >= SELF_AMBITION_MIN &&
+      (a.intelligence ?? 50) >= SELF_INTEL_MIN &&
+      Math.random() < SELF_INITIATIVE_RATE
+    );
 
+    for (const agent of selfCandidates) {
+      if (selfFunded >= MAX_SELF_FUNDED) break;
+      // Pick the best niche the agent can afford (needs 1.5× buffer after paying launch cost)
+      const targetNiche = niches.find(n => agent.money >= (BUSINESS_LAUNCH_COSTS[n.bizType] ?? Infinity) * 1.5);
+      if (!targetNiche) continue;
+      const launchCost = BUSINESS_LAUNCH_COSTS[targetNiche.bizType]!;
+      agent.money -= launchCost;
+      const bizName = await openBusiness(agent, targetNiche, launchCost);
+      selfFunded++;
       logger.info({
-        agentId: agent.id, bizName, bizType, goodName: targetNiche.name,
-        niqueRatio: Math.round(targetNiche.ratio * 100) / 100,
-        unemploymentRate: Math.round(unemploymentRate * 100),
-      }, "Government grant issued (demand-aware)");
+        agentId: agent.id, bizName, bizType: targetNiche.bizType,
+        launchCost, successScore: Math.round(targetNiche.successScore * 100),
+        agentMoney: Math.round(agent.money + launchCost),
+      }, "Self-funded business opened");
     }
 
-    return { grantsIssued, totalSpent };
+    // ── Stage 2: Government grant requests ────────────────────────────
+    // Government only funds niches above the approval threshold.
+    const eligibleNiches = niches.filter(n => n.successScore >= GOV_THRESHOLD);
+    if (eligibleNiches.length === 0) return { selfFunded, govFunded, totalSpent };
+
+    const minCost = Math.min(...Object.values(BUSINESS_LAUNCH_COSTS));
+    if (this.state.governmentBudget < minCost * 2) return { selfFunded, govFunded, totalSpent };
+
+    // Grant candidates: unemployed agents who don't have enough savings to self-fund
+    const grantCandidates = Array.from(this.agents.values())
+      .filter(a =>
+        !a.isRetired &&
+        a.age >= 18 && a.age <= 65 &&
+        a.employerId == null &&
+        a.jailedUntilTick == null &&
+        !existingOwnerIds.has(a.id)
+      )
+      // Sort: most ambitious first; break ties by poorest first
+      .sort((a, b) => {
+        const ad = (b.ambition ?? 50) - (a.ambition ?? 50);
+        return Math.abs(ad) > 10 ? ad : a.money - b.money;
+      })
+      .slice(0, MAX_GOV_FUNDED * 2); // oversample — not every application will be approved
+
+    for (const agent of grantCandidates) {
+      if (govFunded >= MAX_GOV_FUNDED) break;
+      // Rotate through top eligible niches to avoid saturation
+      const nicheIndex  = govFunded % Math.min(eligibleNiches.length, 5);
+      const targetNiche = eligibleNiches[nicheIndex];
+      const launchCost  = BUSINESS_LAUNCH_COSTS[targetNiche.bizType]!;
+
+      // Final budget check (may have decreased from prior approvals in this loop)
+      if (this.state.governmentBudget < launchCost * 2) break;
+
+      this.state.governmentBudget -= launchCost;
+      const bizName = await openBusiness(agent, targetNiche, launchCost);
+      agent.money  += 200; // small cash stipend alongside the grant
+      govFunded++;
+      totalSpent += launchCost;
+
+      logger.info({
+        agentId: agent.id, bizName, bizType: targetNiche.bizType,
+        launchCost, successScore: Math.round(targetNiche.successScore * 100),
+        needScore: Math.round(targetNiche.needScore * 100),
+        marketRatio: Math.round(targetNiche.marketRatio * 100) / 100,
+        govBudgetAfter: Math.round(this.state.governmentBudget),
+      }, "Government grant approved (need-driven)");
+    }
+
+    return { selfFunded, govFunded, totalSpent };
   }
 
   private async syncToDB(gdp: number): Promise<void> {
