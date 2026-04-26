@@ -89,8 +89,8 @@ interface BusinessState extends Business {
 // Повышение в грейд возможно ТОЛЬКО если есть вакантное место на этом грейде.
 // Источник: штатное расписание (изображение пользователя + адаптация для госсектора).
 const STAFFING_TABLE: Record<string, Record<number, number>> = {
-  workshop: { 1: 50, 2: 10, 3: 2, 4: 1, 5: 1 },  // Производственный кластер  (итого 64)
-  farm:     { 1: 15, 2: 3,  3: 2, 4: 1, 5: 1 },  // Фермерский кластер        (итого 22)
+  workshop: { 1: 4,  2: 1,  3: 1, 4: 0, 5: 0 },  // Производственный кластер  (итого 6)
+  farm:     { 1: 3,  2: 1,  3: 0, 4: 0, 5: 0 },  // Фермерский кластер        (итого 4)
   food:     { 1: 20, 2: 4,  3: 1, 4: 1, 5: 1 },  // Фабрика пищи              (итого 27)
   service:  { 1: 50, 2: 10, 3: 1, 4: 1, 5: 1 },  // Фабрика бытовых товаров   (итого 63)
   hospital: { 1: 3,  2: 6,  3: 2, 4: 1, 5: 0 },  // Больница (адм. модель)    (итого 12)
@@ -630,6 +630,40 @@ class SimulationEngine {
     for (const g of rows) {
       this.goods.set(g.id, { ...g });
     }
+
+    // ── Price migration for raw producers ─────────────────────────────────
+    // Old code priced farm goods at baseFoodPrice×0.5 and workshop goods at
+    // baseFoodPrice×0.8, making them too cheap to sustain payroll from B2B
+    // revenue.  If we detect the old prices, upgrade them in-place so that
+    // existing simulations benefit immediately without a reset.
+    const { baseFoodPrice } = this.config;
+    // Target prices for raw-producer goods
+    const FARM_TARGET_PRICE     = baseFoodPrice * 1.2;
+    const WORKSHOP_TARGET_PRICE = baseFoodPrice * 1.2;
+    const toUpdate: Array<{ id: number; basePrice: number; currentPrice: number }> = [];
+
+    for (const good of this.goods.values()) {
+      const biz = good.businessId != null ? this.businesses.get(good.businessId) : null;
+      if (!biz) continue;
+      const target = biz.type === "farm" ? FARM_TARGET_PRICE
+                   : biz.type === "workshop" ? WORKSHOP_TARGET_PRICE
+                   : null;
+      if (target == null) continue;
+      if (Math.abs(good.basePrice - target) < 0.01) continue; // already correct
+      good.basePrice    = target;
+      good.currentPrice = Math.max(target, good.currentPrice);
+      toUpdate.push({ id: good.id, basePrice: good.basePrice, currentPrice: good.currentPrice });
+    }
+
+    for (const { id, basePrice, currentPrice } of toUpdate) {
+      await db.update(goodsTable)
+        .set({ basePrice, currentPrice })
+        .where(eq(goodsTable.id, id))
+        .catch(() => {});
+    }
+    if (toUpdate.length > 0) {
+      logger.info({ count: toUpdate.length }, "Migrated raw-producer good prices to new B2B formula");
+    }
   }
 
   private async ensureHospitals(): Promise<void> {
@@ -720,8 +754,8 @@ class SimulationEngine {
       return {
         name: isF ? pick(RAW_FOOD_GOOD_NAMES) : pick(RAW_MATERIAL_GOOD_NAMES),
         businessId: b.id,
-        basePrice: baseFoodPrice * (isF ? 0.5 : 0.8),
-        currentPrice: baseFoodPrice * (isF ? 0.5 : 0.8),
+        basePrice: baseFoodPrice * 1.2,
+        currentPrice: baseFoodPrice * 1.2,
         quality: rand(isF ? 60 : 50, 90),
         demand: rand(30, 60),
         supply: rand(60, 100),
@@ -874,8 +908,8 @@ class SimulationEngine {
       goodInserts.push({
         name: pick(RAW_FOOD_GOOD_NAMES),
         businessId: bId,
-        basePrice: baseFoodPrice * 0.5,
-        currentPrice: baseFoodPrice * 0.5,
+        basePrice: baseFoodPrice * 1.2,
+        currentPrice: baseFoodPrice * 1.2,
         quality: rand(60, 90),
         demand: rand(30, 60),
         supply: rand(60, 100),
@@ -885,8 +919,8 @@ class SimulationEngine {
       goodInserts.push({
         name: pick(RAW_MATERIAL_GOOD_NAMES),
         businessId: bId,
-        basePrice: baseFoodPrice * 0.8,
-        currentPrice: baseFoodPrice * 0.8,
+        basePrice: baseFoodPrice * 1.2,
+        currentPrice: baseFoodPrice * 1.2,
         quality: rand(50, 85),
         demand: rand(25, 55),
         supply: rand(50, 90),
@@ -1218,9 +1252,17 @@ class SimulationEngine {
     // otherwise they fire all staff, receive only the minimum floor subsidy (≈0),
     // and can never recover.  Commercial businesses (food/service) must self-fund,
     // so they are excluded once their balance drops too low.
+    // Raw-producer businesses (farms, workshops) are the backbone of the supply chain.
+    // They are allowed to hire as long as they are not catastrophically bankrupt —
+    // B2B revenue will recover them once workers start boosting output.
     const availableBusinessIds = Array.from(this.businesses.values())
       .filter(b => {
-        if (b.type === "farm" || b.type === "workshop") return false;
+        // Raw producers: allow hiring unless significantly in debt
+        if (b.type === "farm" || b.type === "workshop") {
+          if (b.balance <= -1000) return false;
+          if (b.employeeCount >= b.maxEmployees) return false;
+          return true;
+        }
         // Commercial: only hire if not deeply in debt
         if (!PUBLIC_SECTOR_TYPES.has(b.type) && b.balance <= -200) return false;
         // Public sector: allow hiring as long as balance is not catastrophically low
@@ -1313,10 +1355,13 @@ class SimulationEngine {
         }
       }
 
-      // Firing: if employer's balance is below zero, fire this agent (50% chance to spread out firings)
+      // Firing: if employer's balance is too low, fire this agent (50% chance to spread out firings).
+      // Raw producers (farms/workshops) tolerate modest deficits — they rely on infrequent
+      // B2B revenue and must not shed all workers on a single quiet tick.
       if (!agent.isRetired && agent.employerId != null) {
         const employer = this.businesses.get(agent.employerId);
-        if (employer && employer.balance < 0 && Math.random() < 0.5) {
+        const fireThreshold = (employer?.type === "farm" || employer?.type === "workshop") ? -1000 : 0;
+        if (employer && employer.balance < fireThreshold && Math.random() < 0.5) {
           employer.employeeCount = Math.max(0, employer.employeeCount - 1);
           employer.firedThisTick++;
           const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
@@ -1959,10 +2004,13 @@ class SimulationEngine {
     this.updateGoodPrices();
     await this.updateBusinesses();
 
-    // Corporate tax: once per game day, 5% of profitable business balance
+    // Corporate tax: once per game day, 5% of profitable business balance.
+    // Raw producers (farms, workshops) are exempt — they are supply-chain
+    // infrastructure and their economics depend on B2B revenue, not profit margins.
     if (isNewDay) {
       let corpTax = 0;
       for (const biz of this.businesses.values()) {
+        if (biz.type === "farm" || biz.type === "workshop") continue;
         if (biz.balance > 500) {
           const tax = biz.balance * 0.05;
           biz.balance -= tax;
@@ -2010,6 +2058,25 @@ class SimulationEngine {
         }
       }
       this.state.totalPublicServicesPaid += dailyPublicSubsidy;
+      this.state.governmentBudget = runningBudget;
+
+      // ── Daily raw-producer support: farms and workshops deeply in the red
+      // receive a modest government grant.  Capped to 1000 coins total per
+      // day to protect the government budget from over-drain.
+      const RAW_SUPPORT_FLOOR  = -500;   // only trigger below this balance
+      const RAW_SUPPORT_AMOUNT = 150;    // per-business top-up per game day
+      const RAW_SUPPORT_CAP    = 1000;   // total budget cap per game day
+      let rawSupportSpent = 0;
+      for (const biz of this.businesses.values()) {
+        if (rawSupportSpent >= RAW_SUPPORT_CAP) break;
+        if (biz.type !== "farm" && biz.type !== "workshop") continue;
+        if (biz.balance > RAW_SUPPORT_FLOOR) continue;
+        if (runningBudget < RAW_SUPPORT_AMOUNT) break;
+        biz.balance += RAW_SUPPORT_AMOUNT;
+        runningBudget -= RAW_SUPPORT_AMOUNT;
+        rawSupportSpent += RAW_SUPPORT_AMOUNT;
+        this.state.totalSubsidiesPaid += RAW_SUPPORT_AMOUNT;
+      }
       this.state.governmentBudget = runningBudget;
 
       // ── One-time survival bailouts for distressed commercial businesses ───────
@@ -2368,8 +2435,8 @@ class SimulationEngine {
       if (biz.type !== "food") continue;
       const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
 
-      // Skip B2B purchase if consumer good supply is already healthy (≥ 60)
-      if (consumerGood && consumerGood.supply >= 60) {
+      // Skip B2B purchase if consumer good supply is very well-stocked (≥ 90)
+      if (consumerGood && consumerGood.supply >= 90) {
         b2bSuccess++;
         continue;
       }
@@ -2381,7 +2448,7 @@ class SimulationEngine {
         biz.balance -= cost;
         const farmBiz = farmGood.businessId != null ? this.businesses.get(farmGood.businessId) : null;
         if (farmBiz) farmBiz.balance += cost;
-        farmGood.supply = clamp(farmGood.supply - 8, 0, 200);
+        farmGood.supply = clamp(farmGood.supply - 3, 0, 200);
         farmGood.demand = clamp(farmGood.demand + 1.5, 0, 200);
         if (consumerGood) {
           consumerGood.supply = clamp(consumerGood.supply + 7, 0, 200);
@@ -2402,8 +2469,8 @@ class SimulationEngine {
       if (biz.type !== "service") continue;
       const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
 
-      // Skip B2B purchase if consumer good supply is already healthy (≥ 60)
-      if (consumerGood && consumerGood.supply >= 60) {
+      // Skip B2B purchase if consumer good supply is very well-stocked (≥ 85)
+      if (consumerGood && consumerGood.supply >= 85) {
         b2bSuccess++; // count as "no action needed"
         continue;
       }
@@ -2415,7 +2482,7 @@ class SimulationEngine {
         biz.balance -= cost;
         const wsBiz = wsGood.businessId != null ? this.businesses.get(wsGood.businessId) : null;
         if (wsBiz) wsBiz.balance += cost;
-        wsGood.supply = clamp(wsGood.supply - 6, 0, 200);
+        wsGood.supply = clamp(wsGood.supply - 3, 0, 200);
         wsGood.demand = clamp(wsGood.demand + 1, 0, 200);
         if (consumerGood) {
           consumerGood.supply = clamp(consumerGood.supply + 5, 0, 200);
@@ -2474,17 +2541,21 @@ class SimulationEngine {
         // Raw/intermediate producers (B2B): supply is demand-driven.
         // Demand here comes from B2B purchases by food/service businesses.
         // When nobody is buying (demand≈0), excess stock should decay.
+        // Employee headcount boosts production (more workers → more output).
+        const rawBiz = good.businessId != null ? this.businesses.get(good.businessId) : null;
+        // Each worker adds 1 unit of output per tick (farmers/factory workers)
+        const empBoost = rawBiz?.employeeCount ?? 0;
         const rawRatio = good.supply / Math.max(good.demand, 1);
         if (rawRatio > 4 || (good.demand < 3 && good.supply > 20)) {
           // Severe overstock — nobody buying: heavy decay
           good.supply = clamp(good.supply - rand(6, 12), 0, 200);
         } else if (rawRatio > 2) {
-          // Moderate surplus
-          good.supply = clamp(good.supply - rand(2, 5), 0, 200);
+          // Moderate surplus: small drain, employees partially offset it
+          good.supply = clamp(good.supply - rand(1, 3) + Math.floor(empBoost * 0.3), 0, 200);
         } else {
-          // Healthy B2B demand: produce normally
-          const output = bizType === "farm" ? rand(4, 10) : rand(3, 8);
-          good.supply = clamp(good.supply + output, 0, 200);
+          // Healthy B2B demand: produce normally, boosted by employees
+          const base = bizType === "farm" ? rand(6, 14) : rand(5, 11);
+          good.supply = clamp(good.supply + base + empBoost, 0, 200);
         }
         // Demand only comes from actual B2B purchases; no artificial decay here
       } else if (bizType === "school" || bizType === "park" || bizType === "temple") {
@@ -2990,8 +3061,12 @@ class SimulationEngine {
       : Promise.resolve();
     const relUpsertP = Promise.all([relNewP, relUpdateP]);
 
-    // Run all bulk updates in parallel
-    await Promise.all([agentUpdateP, needsUpdateP, goodsUpdateP, bizUpdateP, relUpsertP]);
+    // Run table updates sequentially (agents first, then needs) to prevent
+    // row-level lock contention / deadlocks from concurrent large UPDATEs.
+    // Small tables (goods, businesses, relations) run in parallel after agents.
+    await agentUpdateP;
+    await needsUpdateP;
+    await Promise.all([goodsUpdateP, bizUpdateP, relUpsertP]);
 
     // Stats history (single row insert)
     const { avgMood, avgWealth, unemploymentRate } = this.getAggregateStats();
@@ -3007,8 +3082,10 @@ class SimulationEngine {
       governmentBudget: this.state.governmentBudget,
     });
 
-    // Agent stat history (bulk insert + async cleanup)
+    // Agent stat history — only write to DB every 24 ticks (once per game day)
+    // to avoid inserting 4000+ rows every 10 seconds and triggering lock storms.
     const currentTick = this.state.tick;
+    const shouldPersistStatHistory = currentTick % 24 === 0;
     const dbRows: { agentId: number; tick: number; money: number; mood: number; age: number; socialization: number }[] = [];
     for (const agent of this.agents.values()) {
       const snapshot: AgentStatSnapshot = {
@@ -3022,7 +3099,9 @@ class SimulationEngine {
       history.push(snapshot);
       if (history.length > AGENT_STAT_HISTORY_MAX) history.shift();
       this.agentStatHistory.set(agent.id, history);
-      dbRows.push({ agentId: agent.id, tick: currentTick, money: snapshot.money, mood: snapshot.mood, age: snapshot.age, socialization: snapshot.socialization });
+      if (shouldPersistStatHistory) {
+        dbRows.push({ agentId: agent.id, tick: currentTick, money: snapshot.money, mood: snapshot.mood, age: snapshot.age, socialization: snapshot.socialization });
+      }
     }
     if (dbRows.length > 0) {
       await db.insert(agentStatHistoryTable).values(dbRows);
