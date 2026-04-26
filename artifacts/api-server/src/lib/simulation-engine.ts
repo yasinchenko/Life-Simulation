@@ -84,19 +84,29 @@ interface BusinessState extends Business {
 // and ~1000 agents the sustainable per-business headcount is roughly:
 //   maxEmp * baseSalary * subsidyMult ≤ (avg_wage * employed * taxRate) / numPublicBiz
 // Commercial (food/service) caps set the market size for consumer goods.
-const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = {
-  food:     40,
-  service:  25,
-  hospital: 12,   // was 27 – 6 hospitals × 12 = 72 total public health workers
-  park:     15,   // was 63 – 5 parks × 15 = 75 total rec workers
-  temple:   8,    // was 22 – 3 temples × 8 = 24 total
-  farm:     50,
-  school:   12,   // was 31 – 4 schools × 12 = 48 total educators
-  workshop: 20,
+// Staffing table: максимальное кол-во мест по каждому грейду на тип бизнеса.
+// Повышение в грейд возможно ТОЛЬКО если есть вакантное место на этом грейде.
+// Источник: штатное расписание (изображение пользователя + адаптация для госсектора).
+const STAFFING_TABLE: Record<string, Record<number, number>> = {
+  workshop: { 1: 50, 2: 10, 3: 2, 4: 1, 5: 1 },  // Производственный кластер  (итого 64)
+  farm:     { 1: 15, 2: 3,  3: 2, 4: 1, 5: 1 },  // Фермерский кластер        (итого 22)
+  food:     { 1: 20, 2: 4,  3: 1, 4: 1, 5: 1 },  // Фабрика пищи              (итого 27)
+  service:  { 1: 50, 2: 10, 3: 1, 4: 1, 5: 1 },  // Фабрика бытовых товаров   (итого 63)
+  hospital: { 1: 3,  2: 6,  3: 2, 4: 1, 5: 0 },  // Больница (адм. модель)    (итого 12)
+  park:     { 1: 4,  2: 8,  3: 2, 4: 1, 5: 0 },  // Парк (адм. модель)        (итого 15)
+  school:   { 1: 3,  2: 6,  3: 2, 4: 1, 5: 0 },  // Школа (адм. модель)       (итого 12)
+  temple:   { 1: 3,  2: 3,  3: 1, 4: 1, 5: 0 },  // Храм (малая орг.)         (итого 8)
 };
 
-// Business types funded by government subsidy.  Workers here are capped at
-// grade 2 (Менеджер) so their wages always stay within the subsidy envelope.
+// MAX_EMPLOYEES автоматически выводится как сумма всех слотов штатного расписания.
+const MAX_EMPLOYEES_BY_TYPE: Record<string, number> = Object.fromEntries(
+  Object.entries(STAFFING_TABLE).map(([type, slots]) => [
+    type, Object.values(slots).reduce((s, n) => s + n, 0),
+  ])
+);
+
+// Business types funded by government subsidy.  Grade caps are enforced through
+// the STAFFING_TABLE (e.g. hospital grade-5 slots = 0, grade-4 = 1 Director).
 const PUBLIC_SECTOR_TYPES = new Set(["school", "park", "hospital", "temple"]);
 
 interface GoodState extends Good {}
@@ -602,20 +612,6 @@ class SimulationEngine {
       }
     }
 
-    // Startup grade correction: public-sector workers are capped at grade 2
-    // (Менеджер) to prevent wage inflation from making state-funded institutions
-    // permanently unprofitable.  The subsidy formula (2.2× / 1.0× baseSalary) is
-    // designed for grade-1/2 employees — grade-3+ wages exceed what government
-    // can sustainably reimburse within the tax budget.
-    const MAX_PUBLIC_GRADE = 2;
-    for (const agent of this.agents.values()) {
-      if (agent.employerId == null) continue;
-      const employer = this.businesses.get(agent.employerId);
-      if (!employer || !PUBLIC_SECTOR_TYPES.has(employer.type)) continue;
-      if (agent.careerLevel > MAX_PUBLIC_GRADE) {
-        agent.careerLevel = MAX_PUBLIC_GRADE;
-      }
-    }
   }
 
   private async loadGoods(): Promise<void> {
@@ -1219,6 +1215,16 @@ class SimulationEngine {
       })
       .map(b => b.id);
 
+    // Предварительно строим карту «бизнес → грейд → кол-во сотрудников».
+    // Используется в vacancy-check при повышениях: O(N) один раз вместо O(N²).
+    const bizGradeCount = new Map<string, Map<number, number>>();
+    for (const agent of this.agents.values()) {
+      if (!agent.employerId || agent.isRetired) continue;
+      if (!bizGradeCount.has(agent.employerId)) bizGradeCount.set(agent.employerId, new Map());
+      const m = bizGradeCount.get(agent.employerId)!;
+      m.set(agent.careerLevel, (m.get(agent.careerLevel) ?? 0) + 1);
+    }
+
     for (const agentId of agentIds) {
       const agent = this.agents.get(agentId);
       if (!agent) continue;
@@ -1324,41 +1330,57 @@ class SimulationEngine {
       if (!agent.isRetired) {
         const careerTarget = targetGrade(agent.ambition);
         const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : 0;
-
-        // Public-sector workers (hospital / school / park / temple) are capped at
-        // grade 2 (Менеджер) so their wages always stay within the subsidy envelope.
         const employerBiz = agent.employerId ? this.businesses.get(agent.employerId) : null;
-        const isPublicSectorJob = employerBiz != null && PUBLIC_SECTOR_TYPES.has(employerBiz.type);
-        const effectiveCareerTarget = isPublicSectorJob ? Math.min(careerTarget, 2) : careerTarget;
 
-        if (agent.careerLevel < effectiveCareerTarget && agent.employerId != null && tenure >= 120) {
-          // Ambition-driven promotion attempt at current employer.
-          // Rate reduced to 0.5%×ambition per tick so grade-5 realistically
-          // takes many months of game time, preventing early wage hyper-inflation.
-          // Интеллект даёт бонус: intel=50→+0%, intel=90→+0.4%.
-          const intelligenceBonus = ((agent.intelligence ?? 50) - 50) * 0.0001;
-          const promotionProb = (agent.ambition / 100) * 0.005 + intelligenceBonus;
-          if (Math.random() < promotionProb) {
-            agent.careerLevel = Math.min(5, agent.careerLevel + 1);
-            const biz = this.businesses.get(agent.employerId);
-            agent.jobHistory = [...agent.jobHistory, {
-              tick: this.state.tick, event: "promoted",
-              businessId: agent.employerId, businessName: biz?.name ?? null,
-            }];
-            agent.money += agent.careerLevel * rand(8, 15);
-            agent.mood = clamp(agent.mood + rand(5, 12));
+        // Проверка вакансии по штатному расписанию:
+        // повышение разрешено только если на целевом грейде есть свободное место.
+        const hasVacancy = (bizId: string, bizType: string, toGrade: number): boolean => {
+          const slots = STAFFING_TABLE[bizType]?.[toGrade] ?? 0;
+          if (slots <= 0) return false;
+          const occupied = bizGradeCount.get(bizId)?.get(toGrade) ?? 0;
+          return occupied < slots;
+        };
+
+        // Обновляем карту грейдов: агент переходит с fromGrade на toGrade в данном бизнесе.
+        const recordPromotion = (bizId: string, fromGrade: number, toGrade: number): void => {
+          if (!bizGradeCount.has(bizId)) bizGradeCount.set(bizId, new Map());
+          const m = bizGradeCount.get(bizId)!;
+          m.set(fromGrade, Math.max(0, (m.get(fromGrade) ?? 0) - 1));
+          m.set(toGrade, (m.get(toGrade) ?? 0) + 1);
+        };
+
+        if (agent.careerLevel < careerTarget && agent.employerId != null && employerBiz != null && tenure >= 120) {
+          const toGrade = agent.careerLevel + 1;
+          const canPromote = hasVacancy(agent.employerId, employerBiz.type, toGrade);
+
+          if (canPromote) {
+            // Ambition-driven promotion attempt.
+            // Интеллект даёт бонус: intel=50→+0%, intel=90→+0.4%.
+            const intelligenceBonus = ((agent.intelligence ?? 50) - 50) * 0.0001;
+            const promotionProb = (agent.ambition / 100) * 0.005 + intelligenceBonus;
+            if (Math.random() < promotionProb) {
+              recordPromotion(agent.employerId, agent.careerLevel, toGrade);
+              agent.careerLevel = toGrade;
+              agent.jobHistory = [...agent.jobHistory, {
+                tick: this.state.tick, event: "promoted",
+                businessId: agent.employerId, businessName: employerBiz.name,
+              }];
+              agent.money += agent.careerLevel * rand(8, 15);
+              agent.mood = clamp(agent.mood + rand(5, 12));
+            }
           } else if (availableBusinessIds.length > 1 && Math.random() < 0.035) {
-            // Career-driven job switch: seek better opportunity (spec: "Проверить вакансии")
+            // Нет вакансии — ищет работу с возможностью роста в другом бизнесе.
             const candidates = availableBusinessIds.filter(id => id !== agent.employerId);
             if (candidates.length > 0) {
               const newBizId = pick(candidates);
               const newBiz = this.businesses.get(newBizId);
               if (newBiz) {
-                const oldBiz = this.businesses.get(agent.employerId);
-                if (oldBiz) { oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1); oldBiz.firedThisTick++; }
+                const oldBiz = employerBiz;
+                oldBiz.employeeCount = Math.max(0, oldBiz.employeeCount - 1);
+                oldBiz.firedThisTick++;
                 agent.jobHistory = [...agent.jobHistory, {
                   tick: this.state.tick, event: "quit",
-                  businessId: agent.employerId, businessName: oldBiz?.name ?? null, duration: tenure,
+                  businessId: agent.employerId, businessName: oldBiz.name, duration: tenure,
                 }];
                 agent.employerId = newBizId;
                 agent.jobStartTick = this.state.tick;
@@ -1371,30 +1393,47 @@ class SimulationEngine {
               }
             }
           }
-        } else if (agent.careerLevel >= careerTarget && agent.employerId != null
+        } else if (agent.careerLevel >= careerTarget && agent.employerId != null && employerBiz != null
             && tenure >= 200 && agent.careerLevel < 5 && Math.random() < 0.002) {
-          // Exceptional promotion even when career goal is satisfied (top performers)
-          agent.careerLevel = Math.min(5, agent.careerLevel + 1);
-          const biz = this.businesses.get(agent.employerId);
-          agent.jobHistory = [...agent.jobHistory, {
-            tick: this.state.tick, event: "promoted",
-            businessId: agent.employerId, businessName: biz?.name ?? null,
-          }];
-          agent.money += agent.careerLevel * rand(8, 15);
-          agent.mood = clamp(agent.mood + rand(3, 8));
+          // Исключительное повышение сверхрезультативных сотрудников — тоже требует вакансии.
+          const toGrade = agent.careerLevel + 1;
+          if (hasVacancy(agent.employerId, employerBiz.type, toGrade)) {
+            recordPromotion(agent.employerId, agent.careerLevel, toGrade);
+            agent.careerLevel = toGrade;
+            agent.jobHistory = [...agent.jobHistory, {
+              tick: this.state.tick, event: "promoted",
+              businessId: agent.employerId, businessName: employerBiz.name,
+            }];
+            agent.money += agent.careerLevel * rand(8, 15);
+            agent.mood = clamp(agent.mood + rand(3, 8));
+          }
         }
       }
 
-      // Job seeking: unemployed, non-retired agents have a 30% chance to find work
+      // Job seeking: unemployed, non-retired agents have a 30% chance to find work.
+      // Найм разрешён только если в бизнесе есть вакансия на текущем грейде агента.
       if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.30) {
-        const newBizId = pick(availableBusinessIds);
-        const newBiz = this.businesses.get(newBizId);
-        if (newBiz) {
-          agent.employerId = newBizId;
-          agent.jobStartTick = this.state.tick;
-          newBiz.employeeCount++;
-          newBiz.hiredThisTick++;
-          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBizId, businessName: newBiz.name }];
+        const eligibleBizIds = availableBusinessIds.filter(bizId => {
+          const biz = this.businesses.get(bizId);
+          if (!biz) return false;
+          const slots = STAFFING_TABLE[biz.type]?.[agent.careerLevel] ?? 0;
+          const occupied = bizGradeCount.get(bizId)?.get(agent.careerLevel) ?? 0;
+          return occupied < slots;
+        });
+        if (eligibleBizIds.length > 0) {
+          const newBizId = pick(eligibleBizIds);
+          const newBiz = this.businesses.get(newBizId);
+          if (newBiz) {
+            agent.employerId = newBizId;
+            agent.jobStartTick = this.state.tick;
+            newBiz.employeeCount++;
+            newBiz.hiredThisTick++;
+            // Обновляем карту грейдов при найме
+            if (!bizGradeCount.has(newBizId)) bizGradeCount.set(newBizId, new Map());
+            const m = bizGradeCount.get(newBizId)!;
+            m.set(agent.careerLevel, (m.get(agent.careerLevel) ?? 0) + 1);
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "hired", businessId: newBizId, businessName: newBiz.name }];
+          }
         }
       }
 
