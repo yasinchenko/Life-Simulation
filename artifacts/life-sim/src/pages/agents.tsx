@@ -708,19 +708,19 @@ function NeedsPanel({ stats }: { stats: NeedsStats }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-border/40">
+      <div className="grid grid-cols-1 divide-y divide-border/40">
         {[sorted.slice(0, 6), sorted.slice(6)].map((col, ci) => (
           <div key={ci} className="divide-y divide-border/30">
             {col.map((meta) => {
               const s = stats[meta.key];
               const status = needStatusLabel(s.avg);
               return (
-                <div key={meta.key} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/10 transition-colors">
+                <div key={meta.key} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 hover:bg-muted/10 transition-colors">
                   <span
                     className="w-1.5 h-1.5 rounded-full shrink-0"
                     style={{ background: meta.color, boxShadow: `0 0 5px ${meta.color}80` }}
                   />
-                  <span className="text-xs text-muted-foreground w-36 shrink-0 truncate">{meta.label}</span>
+                  <span className="text-xs text-muted-foreground w-24 sm:w-36 shrink-0 truncate">{meta.label}</span>
                   <div className="flex-1 h-2 bg-muted/40 rounded-full overflow-hidden min-w-0">
                     <div
                       className="h-full rounded-full transition-all duration-700"
@@ -734,17 +734,17 @@ function NeedsPanel({ stats }: { stats: NeedsStats }) {
                     {status.text}
                   </span>
                   {s.criticalPct > 0 && (
-                    <span className="text-[10px] text-[hsl(348,83%,52%)] tabular-nums w-12 text-right shrink-0">
+                    <span className="hidden sm:inline text-[10px] text-[hsl(348,83%,52%)] tabular-nums w-12 text-right shrink-0">
                       {s.criticalPct}% крит
                     </span>
                   )}
                   {s.criticalPct === 0 && s.lowPct > 0 && (
-                    <span className="text-[10px] text-[hsl(43,100%,50%)] tabular-nums w-12 text-right shrink-0">
+                    <span className="hidden sm:inline text-[10px] text-[hsl(43,100%,50%)] tabular-nums w-12 text-right shrink-0">
                       {s.lowPct}% низко
                     </span>
                   )}
                   {s.criticalPct === 0 && s.lowPct === 0 && (
-                    <span className="w-12 shrink-0" />
+                    <span className="hidden sm:block w-12 shrink-0" />
                   )}
                 </div>
               );

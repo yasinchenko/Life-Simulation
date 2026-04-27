@@ -39,10 +39,10 @@ const DEFAULT_CONFIG: SimulationConfig = {
   initialBusinesses: 80,
   baseFoodPrice: 10,
   baseSalary: 50,
-  subsidyAmount: 20,
+  subsidyAmount: 15,
   socialInteractionStrength: 2,
   priceMarkup: 0.2,
-  pensionRate: 0.3,
+  pensionRate: 0.15,
 };
 
 const AGENT_SORT_KEYS = ["name", "age", "mood", "money", "currentAction"] as const;
@@ -1388,7 +1388,9 @@ class SimulationEngine {
       if (!agent.isRetired && agent.employerId != null) {
         const employer = this.businesses.get(agent.employerId);
         if (employer) {
-          const fireThreshold = (employer.type === "farm" || employer.type === "workshop") ? -1500 : 0;
+          // Farm/workshop: fire at -1500 (B2B income is slow, need buffer)
+          // Food/service: fire at -400 (need small buffer to weather demand slumps)
+          const fireThreshold = (employer.type === "farm" || employer.type === "workshop") ? -1500 : -400;
           const overCapacity = employer.maxEmployees != null && employer.employeeCount > employer.maxEmployees;
           const shouldFire =
             (employer.balance < fireThreshold && Math.random() < 0.5) ||
@@ -2952,12 +2954,14 @@ class SimulationEngine {
     const eligibleNiches = niches.filter(n => n.successScore >= GOV_THRESHOLD);
     if (eligibleNiches.length === 0) return { selfFunded, govFunded, totalSpent };
 
-    // Минимальный запас бюджета до выдачи грантов.
-    // При высокой безработице (>60%) допускаем выдачу грантов при небольшом запасе,
-    // так как структурная занятость важнее накопления резерва.
-    const GRANT_BUDGET_RESERVE = unemploymentRate > 0.60 ? 2_000
-                                : unemploymentRate > 0.40 ? 8_000
-                                : 20_000;
+    // Минимальный порог бюджета для выдачи грантов.
+    // При высокой безработице (>60%) правительство может уйти в дефицит до -15_000 —
+    // инвестиция в новый бизнес возвращается налогами быстрее, чем копится долг.
+    // При безработице 40-60% допускаем небольшой дефицит (-5_000).
+    // При здоровой экономике требуем положительный резерв.
+    const GRANT_BUDGET_RESERVE = unemploymentRate > 0.60 ? -15_000
+                                : unemploymentRate > 0.40 ? -5_000
+                                : 10_000;
     if (this.state.governmentBudget < GRANT_BUDGET_RESERVE) return { selfFunded, govFunded, totalSpent };
 
     // Grant candidates: unemployed agents who don't have enough savings to self-fund
@@ -2984,7 +2988,8 @@ class SimulationEngine {
       const launchCost  = BUSINESS_LAUNCH_COSTS[targetNiche.bizType]!;
 
       // Final budget check (may have decreased from prior approvals in this loop)
-      if (this.state.governmentBudget < launchCost * 2) break;
+      // Stop issuing grants if we'd go deeper than the allowed deficit limit
+      if (this.state.governmentBudget - launchCost < GRANT_BUDGET_RESERVE) break;
 
       this.state.governmentBudget -= launchCost;
       const bizName = await openBusiness(agent, targetNiche, launchCost);
