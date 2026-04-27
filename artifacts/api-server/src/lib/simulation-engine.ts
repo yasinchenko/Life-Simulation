@@ -91,8 +91,8 @@ interface BusinessState extends Business {
 const STAFFING_TABLE: Record<string, Record<number, number>> = {
   workshop: { 1: 4,  2: 1,  3: 1, 4: 0, 5: 0 },  // Производственный кластер  (итого 6)
   farm:     { 1: 3,  2: 1,  3: 0, 4: 0, 5: 0 },  // Фермерский кластер        (итого 4)
-  food:     { 1: 20, 2: 4,  3: 1, 4: 1, 5: 1 },  // Фабрика пищи              (итого 27)
-  service:  { 1: 50, 2: 10, 3: 1, 4: 1, 5: 1 },  // Фабрика бытовых товаров   (итого 63)
+  food:     { 1: 4,  2: 1,  3: 1, 4: 0, 5: 0 },  // Фабрика пищи              (итого 6)
+  service:  { 1: 7,  2: 2,  3: 1, 4: 0, 5: 0 },  // Фабрика бытовых товаров   (итого 10)
   hospital: { 1: 3,  2: 6,  3: 2, 4: 1, 5: 0 },  // Больница (адм. модель)    (итого 12)
   park:     { 1: 4,  2: 8,  3: 2, 4: 1, 5: 0 },  // Парк (адм. модель)        (итого 15)
   school:   { 1: 3,  2: 6,  3: 2, 4: 1, 5: 0 },  // Школа (адм. модель)       (итого 12)
@@ -1257,9 +1257,11 @@ class SimulationEngine {
     // B2B revenue will recover them once workers start boosting output.
     const availableBusinessIds = Array.from(this.businesses.values())
       .filter(b => {
-        // Raw producers: allow hiring unless significantly in debt
+        // Raw producers: allow hiring as long as they can still earn B2B revenue.
+        // B2B income with even 1 employee exceeds daily wage, so allow hiring
+        // until deeply distressed.
         if (b.type === "farm" || b.type === "workshop") {
-          if (b.balance <= -1000) return false;
+          if (b.balance <= -1500) return false;
           if (b.employeeCount >= b.maxEmployees) return false;
           return true;
         }
@@ -1360,7 +1362,7 @@ class SimulationEngine {
       // B2B revenue and must not shed all workers on a single quiet tick.
       if (!agent.isRetired && agent.employerId != null) {
         const employer = this.businesses.get(agent.employerId);
-        const fireThreshold = (employer?.type === "farm" || employer?.type === "workshop") ? -1000 : 0;
+        const fireThreshold = (employer?.type === "farm" || employer?.type === "workshop") ? -1500 : 0;
         if (employer && employer.balance < fireThreshold && Math.random() < 0.5) {
           employer.employeeCount = Math.max(0, employer.employeeCount - 1);
           employer.firedThisTick++;
@@ -1548,7 +1550,7 @@ class SimulationEngine {
           // Still apply need decay below, but skip criticalNeed action
           agent.needs.hunger = clamp(agent.needs.hunger - needDecayRate * rand(0.5, 1.5));
           agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
-          agent.needs.sleep = clamp(agent.needs.sleep - 2.5 * rand(0.8, 1.2));
+          agent.needs.sleep = clamp(agent.needs.sleep - 1.8 * rand(0.8, 1.2));
           continue;
         }
       }
@@ -1557,7 +1559,7 @@ class SimulationEngine {
       agent.needs.comfort = clamp(agent.needs.comfort - needDecayRate * rand(0.3, 1.0));
       // Общение: по спеку -1 каждые 4 часа ≈ 0.25/тик — не масштабируется needDecayRate
       agent.needs.social = clamp(agent.needs.social - rand(0.15, 0.4));
-      agent.needs.sleep = clamp(agent.needs.sleep - 2.5 * rand(0.8, 1.2));
+      agent.needs.sleep = clamp(agent.needs.sleep - 1.8 * rand(0.8, 1.2));
       // Образование: по спеку не расходуется — очень медленное снижение для устойчивости
       agent.needs.education = clamp(agent.needs.education - rand(0.05, 0.15));
       // Развлечения: по спеку -0.5/час ≈ 0.5/тик
@@ -1806,8 +1808,12 @@ class SimulationEngine {
           agent.currentAction = "work";
           agent.needs.financialSafety = clamp(agent.needs.financialSafety + rand(3, 7));
         } else {
-          // Unemployed: urgently seek a job — no special subsidy, standard support applies separately
-          const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
+          // Unemployed: urgently seek a job. Raw producers (farm/workshop) are
+          // included even when negative — they earn B2B revenue with employees.
+          const availBiz = Array.from(this.businesses.values()).filter(b =>
+            b.employeeCount < b.maxEmployees &&
+            (b.balance > -200 || b.type === "farm" || b.type === "workshop")
+          );
           if (availBiz.length > 0) {
             const newBiz = pick(availBiz);
             agent.employerId = newBiz.id;
@@ -1826,8 +1832,11 @@ class SimulationEngine {
           agent.currentAction = "work";
           agent.needs.housingSafety = clamp(agent.needs.housingSafety + rand(3, 8));
         } else {
-          // No housing: desperately seek employment — no special subsidy, standard support applies separately
-          const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
+          // No housing: desperately seek employment (farms/workshops included even if negative)
+          const availBiz = Array.from(this.businesses.values()).filter(b =>
+            b.employeeCount < b.maxEmployees &&
+            (b.balance > -200 || b.type === "farm" || b.type === "workshop")
+          );
           if (availBiz.length > 0) {
             const newBiz = pick(availBiz);
             agent.employerId = newBiz.id;
@@ -1875,8 +1884,11 @@ class SimulationEngine {
             agent.currentAction = "work";
           }
         } else {
-          // Безработный — любая работа улучшит wellbeing
-          const availBiz = Array.from(this.businesses.values()).filter(b => b.balance > -200 && b.employeeCount < b.maxEmployees);
+          // Безработный — любая работа улучшит wellbeing (farms/workshops included even if negative)
+          const availBiz = Array.from(this.businesses.values()).filter(b =>
+            b.employeeCount < b.maxEmployees &&
+            (b.balance > -200 || b.type === "farm" || b.type === "workshop")
+          );
           if (availBiz.length > 0) {
             const newBiz = pick(availBiz);
             agent.employerId = newBiz.id;
@@ -2430,69 +2442,65 @@ class SimulationEngine {
       return biz?.type === "workshop";
     });
 
-    // Food businesses buy raw ingredients from farms ONLY when supply is low
+    // Food businesses buy raw ingredients from farms ONLY when supply is low.
+    // Farm is chosen RANDOMLY among available ones (supply > 10) to distribute
+    // load evenly across all farms rather than always hammering the same one.
     for (const biz of this.businesses.values()) {
       if (biz.type !== "food") continue;
       const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
 
-      // Skip B2B purchase if consumer good supply is very well-stocked (≥ 90)
-      if (consumerGood && consumerGood.supply >= 90) {
-        b2bSuccess++;
-        continue;
-      }
-
-      const farmGood = farmGoods.find(g => g.supply > 20) ?? null;
+      // B2B procurement runs every tick — food businesses always buy raw ingredients
+      // from farms (this represents a continuous supply chain, not a reorder trigger).
+      // Food supply at the consumer-goods layer is managed separately by agent purchases
+      // and per-tick production. Removing the supply threshold stops farms from being
+      // starved of revenue when food biz supply is permanently maxed by production.
+      const availFarms = farmGoods.filter(g => g.supply > 10);
+      const farmGood = availFarms.length > 0 ? availFarms[Math.floor(Math.random() * availFarms.length)] : null;
 
       if (farmGood && biz.balance >= farmGood.currentPrice) {
         const cost = farmGood.currentPrice;
         biz.balance -= cost;
         const farmBiz = farmGood.businessId != null ? this.businesses.get(farmGood.businessId) : null;
         if (farmBiz) farmBiz.balance += cost;
-        farmGood.supply = clamp(farmGood.supply - 3, 0, 200);
-        farmGood.demand = clamp(farmGood.demand + 1.5, 0, 200);
+        farmGood.supply = clamp(farmGood.supply - 1, 0, 200);
+        farmGood.demand = clamp(farmGood.demand + 1, 0, 200);
         if (consumerGood) {
-          consumerGood.supply = clamp(consumerGood.supply + 7, 0, 200);
-          consumerGood.quality = clamp(consumerGood.quality + 0.3, 0, 100);
+          consumerGood.quality = clamp(consumerGood.quality + 0.1, 0, 100);
         }
         b2bSuccess++;
       } else {
         if (consumerGood) {
-          consumerGood.supply = clamp(consumerGood.supply - 2, 0, 200);
-          consumerGood.quality = clamp(consumerGood.quality - 0.4, 0, 100);
+          consumerGood.quality = clamp(consumerGood.quality - 0.2, 0, 100);
         }
         b2bFail++;
       }
     }
 
-    // Service businesses buy raw materials from workshops ONLY when supply is low
+    // Service businesses buy raw materials from workshops ONLY when supply is low.
+    // Workshop is chosen RANDOMLY to distribute load evenly.
     for (const biz of this.businesses.values()) {
       if (biz.type !== "service") continue;
       const consumerGood = Array.from(this.goods.values()).find(g => g.businessId === biz.id) ?? null;
 
-      // Skip B2B purchase if consumer good supply is very well-stocked (≥ 85)
-      if (consumerGood && consumerGood.supply >= 85) {
-        b2bSuccess++; // count as "no action needed"
-        continue;
-      }
-
-      const wsGood = workshopGoods.find(g => g.supply > 15) ?? null;
+      // B2B procurement runs every tick — service businesses always buy materials
+      // from workshops as a continuous supply chain relationship.
+      const availWs = workshopGoods.filter(g => g.supply > 10);
+      const wsGood = availWs.length > 0 ? availWs[Math.floor(Math.random() * availWs.length)] : null;
 
       if (wsGood && biz.balance >= wsGood.currentPrice) {
         const cost = wsGood.currentPrice;
         biz.balance -= cost;
         const wsBiz = wsGood.businessId != null ? this.businesses.get(wsGood.businessId) : null;
         if (wsBiz) wsBiz.balance += cost;
-        wsGood.supply = clamp(wsGood.supply - 3, 0, 200);
+        wsGood.supply = clamp(wsGood.supply - 1, 0, 200);
         wsGood.demand = clamp(wsGood.demand + 1, 0, 200);
         if (consumerGood) {
-          consumerGood.supply = clamp(consumerGood.supply + 5, 0, 200);
-          consumerGood.quality = clamp(consumerGood.quality + 0.2, 0, 100);
+          consumerGood.quality = clamp(consumerGood.quality + 0.1, 0, 100);
         }
         b2bSuccess++;
       } else {
         if (consumerGood) {
-          consumerGood.supply = clamp(consumerGood.supply - 1, 0, 200);
-          consumerGood.quality = clamp(consumerGood.quality - 0.2, 0, 100);
+          consumerGood.quality = clamp(consumerGood.quality - 0.1, 0, 100);
         }
         b2bFail++;
       }
@@ -2553,8 +2561,9 @@ class SimulationEngine {
           // Moderate surplus: small drain, employees partially offset it
           good.supply = clamp(good.supply - rand(1, 3) + Math.floor(empBoost * 0.3), 0, 200);
         } else {
-          // Healthy B2B demand: produce normally, boosted by employees
-          const base = bizType === "farm" ? rand(6, 14) : rand(5, 11);
+          // Healthy B2B demand: produce normally, boosted by employees.
+          // Higher base production so farms can sustain frequent B2B sales.
+          const base = bizType === "farm" ? rand(12, 20) : rand(9, 16);
           good.supply = clamp(good.supply + base + empBoost, 0, 200);
         }
         // Demand only comes from actual B2B purchases; no artificial decay here
