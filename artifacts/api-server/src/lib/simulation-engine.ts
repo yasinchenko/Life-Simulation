@@ -1173,20 +1173,43 @@ class SimulationEngine {
     this.state.gameHour = (this.state.gameHour + 1) % 24;
     if (this.state.gameHour === 0) this.state.gameDay++;
 
+    const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength, pensionRate } = this.config;
+
+    // Динамический расчёт maxEmployees для частного сектора каждый тик.
+    // Правило: бизнес может нанимать, пока общий ФОТ не превышает 60% баланса.
+    // dynamicMax = floor(0.6 × balance / baseSalary)
+    // Итого: max(STAFFING_TABLE_min, dynamicMax) — таблица задаёт минимум, баланс — потолок.
+    // Государственный сектор (hospital/park/school/temple) финансируется из бюджета
+    // и не зависит от собственного баланса — для него применяется фиксированный лимит.
+    const PRIVATE_SECTOR_TYPES = new Set(["farm", "workshop", "food", "service"]);
     for (const biz of this.businesses.values()) {
       biz.firedThisTick = 0;
       biz.hiredThisTick = 0;
+      if (PRIVATE_SECTOR_TYPES.has(biz.type)) {
+        const staffingMin = MAX_EMPLOYEES_BY_TYPE[biz.type] ?? 1;
+        // Коэффициент зависит от типа бизнеса:
+        // - Производители (farm/workshop): низкий коэффициент 0.08 — их доход только B2B (~480/день),
+        //   на 7 сотрудников при зарплате 61 нужно 480/7 ≈ 68, баланс 68/0.08 = 850 минимум.
+        //   При балансе 5000 → max=6 (устойчиво). При 50000 → max=65 (если сверхприбыльны).
+        // - Торговля (food/service): высокий коэффициент 0.6 — высокий оборот от агентов каждый тик,
+        //   доход намного выше зарплатного фонда при любом разумном числе работников.
+        const coef = (biz.type === "farm" || biz.type === "workshop") ? 0.08 : 0.6;
+        const dynamicMax = biz.balance > 0
+          ? Math.floor(coef * biz.balance / baseSalary)
+          : 0;
+        biz.maxEmployees = Math.max(staffingMin, dynamicMax);
+      }
+      // Public sector: зафиксировано таблицей штатного расписания (не пересчитывается)
     }
-
-    const { taxRate, needDecayRate, subsidyAmount, baseSalary, socialInteractionStrength, pensionRate } = this.config;
 
     const isNewDay = this.state.gameHour === 0;
     const dailyDeaths: number[] = [];
-    // Dynamic birth rate: high when far from 1000-agent target, drops at capacity
-    const popTarget = 1000;
+    // Dynamic birth rate: high when far below popTarget, near-zero at capacity.
+    // No floor — rate approaches 0 naturally as population nears target.
+    const popTarget = this.config.initialAgents;
     const birthRate = this.agents.size < popTarget
-      ? Math.max(0.04, 0.08 * (1 - this.agents.size / popTarget)) // 8% → 4% as pop grows
-      : 0.003; // maintenance rate above target
+      ? 0.06 * (1 - this.agents.size / popTarget)
+      : 0.0005; // практически нулевой прирост выше целевого уровня
     const plannedBirths = isNewDay ? Math.max(2, Math.round(this.agents.size * birthRate)) : 0;
 
     // ── Daily productivity investments ─────────────────────────────────────────
@@ -1357,19 +1380,27 @@ class SimulationEngine {
         }
       }
 
-      // Firing: if employer's balance is too low, fire this agent (50% chance to spread out firings).
-      // Raw producers (farms/workshops) tolerate modest deficits — they rely on infrequent
-      // B2B revenue and must not shed all workers on a single quiet tick.
+      // Firing: проверяем два условия.
+      // 1) Баланс ниже порога (50% шанс в тике, чтобы не увольнять всех разом).
+      //    Фермы/мастерские терпят небольшой дефицит — их B2B-доход поступает нечасто.
+      // 2) Компания переполнена (employeeCount > maxEmployees) — шанс 70% в тике,
+      //    чтобы быстро скорректировать штат при падении динамического потолка.
       if (!agent.isRetired && agent.employerId != null) {
         const employer = this.businesses.get(agent.employerId);
-        const fireThreshold = (employer?.type === "farm" || employer?.type === "workshop") ? -1500 : 0;
-        if (employer && employer.balance < fireThreshold && Math.random() < 0.5) {
-          employer.employeeCount = Math.max(0, employer.employeeCount - 1);
-          employer.firedThisTick++;
-          const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
-          agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: agent.employerId, businessName: employer.name, duration: tenure }];
-          agent.employerId = null;
-          agent.jobStartTick = null;
+        if (employer) {
+          const fireThreshold = (employer.type === "farm" || employer.type === "workshop") ? -1500 : 0;
+          const overCapacity = employer.maxEmployees != null && employer.employeeCount > employer.maxEmployees;
+          const shouldFire =
+            (employer.balance < fireThreshold && Math.random() < 0.5) ||
+            (overCapacity && Math.random() < 0.7);
+          if (shouldFire) {
+            employer.employeeCount = Math.max(0, employer.employeeCount - 1);
+            employer.firedThisTick++;
+            const tenure = agent.jobStartTick != null ? this.state.tick - agent.jobStartTick : undefined;
+            agent.jobHistory = [...agent.jobHistory, { tick: this.state.tick, event: "fired", businessId: agent.employerId, businessName: employer.name, duration: tenure }];
+            agent.employerId = null;
+            agent.jobStartTick = null;
+          }
         }
       }
 
@@ -1473,15 +1504,29 @@ class SimulationEngine {
         }
       }
 
-      // Job seeking: unemployed, non-retired agents have a 30% chance to find work.
-      // Найм разрешён только если в бизнесе есть вакансия на текущем грейде агента.
-      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.30) {
+      // Job seeking: unemployed, non-retired agents have a 60% chance to find work per tick.
+      // Повышено с 30% до 60% чтобы безработные активнее занимали новые места.
+      // Найм разрешён если:
+      //   а) в бизнесе есть вакансия на грейде агента по таблице штатного расписания, ИЛИ
+      //   б) у бизнеса есть динамическая ёмкость выше STAFFING_TABLE — лишние места
+      //      выделяются как grade-1 позиции (рядовые работники).
+      if (!agent.isRetired && agent.employerId == null && availableBusinessIds.length > 0 && Math.random() < 0.60) {
         const eligibleBizIds = availableBusinessIds.filter(bizId => {
           const biz = this.businesses.get(bizId);
           if (!biz) return false;
-          const slots = STAFFING_TABLE[biz.type]?.[agent.careerLevel] ?? 0;
+          const tableSlots = STAFFING_TABLE[biz.type]?.[agent.careerLevel] ?? 0;
           const occupied = bizGradeCount.get(bizId)?.get(agent.careerLevel) ?? 0;
-          return occupied < slots;
+          // Стандартная проверка по таблице штатного расписания
+          if (occupied < tableSlots) return true;
+          // Динамическое расширение: лишние места сверх таблицы — только grade-1
+          if (agent.careerLevel === 1) {
+            const baseCapacity = MAX_EMPLOYEES_BY_TYPE[biz.type] ?? 0;
+            const dynamicExtra = Math.max(0, (biz.maxEmployees ?? 0) - baseCapacity);
+            const totalGrade1Occupied = bizGradeCount.get(bizId)?.get(1) ?? 0;
+            const totalGrade1Slots = (STAFFING_TABLE[biz.type]?.[1] ?? 0) + dynamicExtra;
+            return totalGrade1Occupied < totalGrade1Slots;
+          }
+          return false;
         });
         if (eligibleBizIds.length > 0) {
           const newBizId = pick(eligibleBizIds);
@@ -2810,8 +2855,13 @@ class SimulationEngine {
    */
   private async processBusinessOpenings(): Promise<{ selfFunded: number; govFunded: number; totalSpent: number }> {
     const MAX_SELF_FUNDED      = 3;    // cap per game day to avoid sudden market floods
-    const MAX_GOV_FUNDED       = 2;    // reduced: government is selective and cash-constrained
-    const GOV_THRESHOLD        = 0.55; // raised: only fund niches with strong genuine demand
+    const MAX_GOV_FUNDED       = 3;    // up to 3 gov-funded businesses per day
+    // Текущий уровень безработицы (доля работоспособного населения без работы)
+    const { unemploymentRate } = this.getAggregateStats();
+    // При высокой безработице снижаем порог входа — правительство больше рискует
+    const GOV_THRESHOLD = unemploymentRate > 0.60 ? 0.25
+                        : unemploymentRate > 0.40 ? 0.35
+                        : 0.45;
     const SELF_AMBITION_MIN    = 55;   // agent must be ambitious enough to start a business
     const SELF_INTEL_MIN       = 40;   // agent must have enough intelligence
     const SELF_INITIATIVE_RATE = 0.05; // 5% daily chance per eligible agent
@@ -2902,9 +2952,12 @@ class SimulationEngine {
     const eligibleNiches = niches.filter(n => n.successScore >= GOV_THRESHOLD);
     if (eligibleNiches.length === 0) return { selfFunded, govFunded, totalSpent };
 
-    // Government must maintain a meaningful reserve before issuing grants
-    // (covers ~2 days of pensions + public service funding)
-    const GRANT_BUDGET_RESERVE = 40_000;
+    // Минимальный запас бюджета до выдачи грантов.
+    // При высокой безработице (>60%) допускаем выдачу грантов при небольшом запасе,
+    // так как структурная занятость важнее накопления резерва.
+    const GRANT_BUDGET_RESERVE = unemploymentRate > 0.60 ? 2_000
+                                : unemploymentRate > 0.40 ? 8_000
+                                : 20_000;
     if (this.state.governmentBudget < GRANT_BUDGET_RESERVE) return { selfFunded, govFunded, totalSpent };
 
     // Grant candidates: unemployed agents who don't have enough savings to self-fund
@@ -3381,6 +3434,7 @@ class SimulationEngine {
       balance: Math.round(b.balance * 100) / 100,
       productionRate: b.productionRate,
       employeeCount: b.employeeCount,
+      maxEmployees: b.maxEmployees,
       ownerId: b.ownerId,
       firedThisTick: b.firedThisTick,
       hiredThisTick: b.hiredThisTick,

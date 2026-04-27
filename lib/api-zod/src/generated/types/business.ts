@@ -13,8 +13,10 @@ export interface Business {
   balance: number;
   productionRate: number;
   employeeCount: number;
+  maxEmployees?: number;
   /** @nullable */
   ownerId?: number | null;
   firedThisTick: number;
   hiredThisTick: number;
+  productivityLevel: number;
 }

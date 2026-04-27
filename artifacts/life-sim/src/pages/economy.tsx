@@ -604,7 +604,12 @@ function BizTable({ businesses, loading }: { businesses: BizItem[]; loading: boo
                 <td className={cn("px-3 py-2 text-right tabular-nums font-medium", struggling ? "text-[hsl(348,83%,47%)]" : "text-[hsl(173,80%,40%)]")}>
                   {biz.balance.toFixed(0)}
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums text-foreground">{biz.employeeCount}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-foreground">
+                  {biz.employeeCount}
+                  {biz.maxEmployees != null && (
+                    <span className="text-muted-foreground/60 text-xs ml-0.5">/{biz.maxEmployees}</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right">
                   <span className="flex items-center justify-end gap-2">
                     {biz.hiredThisTick > 0 && (

@@ -198,6 +198,7 @@ export const ListBusinessesResponseItem = zod.object({
   "balance": zod.number(),
   "productionRate": zod.number(),
   "employeeCount": zod.number(),
+  "maxEmployees": zod.number().optional(),
   "ownerId": zod.number().nullish(),
   "firedThisTick": zod.number(),
   "hiredThisTick": zod.number(),
