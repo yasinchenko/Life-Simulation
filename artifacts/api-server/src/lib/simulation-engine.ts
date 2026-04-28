@@ -349,6 +349,7 @@ export interface TickDebugReport {
     publicServiceSpend: number;
     pensionRecipients: number;
     subsidyRecipients: number;
+    inheritanceRecycled: number;
   };
   market: {
     totalDemand: number;
@@ -1237,6 +1238,7 @@ class SimulationEngine {
     let pensionPaid = 0;
     let publicServiceSpend = 0;
     let runningBudget = this.state.governmentBudget;
+    let inheritanceRecycled = 0; // total estate money returned to economy
 
     const dbgBudgetBefore = runningBudget;
     const dbgBizBalanceBefore = Array.from(this.businesses.values()).reduce((s, b) => s + b.balance, 0);
@@ -2028,6 +2030,8 @@ class SimulationEngine {
     // Process daily lifecycle: remove dead agents, spawn newborns
     if (isNewDay) {
       if (dailyDeaths.length > 0) {
+        // Pre-compute dead IDs for heir filtering
+        const deadSet = new Set(dailyDeaths);
         for (const deadId of dailyDeaths) {
           const deadAgent = this.agents.get(deadId);
           if (!deadAgent) continue;
@@ -2036,6 +2040,33 @@ class SimulationEngine {
             const biz = this.businesses.get(deadAgent.employerId);
             if (biz) biz.employeeCount = Math.max(0, biz.employeeCount - 1);
           }
+
+          // ── Наследование ────────────────────────────────────────────────────
+          // Деньги умершего агента НЕ уничтожаются, а возвращаются в экономику:
+          // 50% → государственный бюджет (налог на наследство),
+          // 50% → случайный трудоспособный агент (семья / наследник).
+          // Это предотвращает дефляцию денежной массы при высокой смертности.
+          if (deadAgent.money > 0) {
+            const estate = deadAgent.money;
+            const govShare = Math.round(estate * 0.5);
+            const heirShare = estate - govShare;
+            this.state.governmentBudget += govShare;
+            runningBudget = this.state.governmentBudget;
+            inheritanceRecycled += estate;
+
+            // Найти наследника: живой, трудоспособный, не умирает в этот же тик
+            const heirPool = Array.from(this.agents.values()).filter(
+              a => !deadSet.has(a.id) && !a.isRetired && a.age >= 18 && a.age <= 65
+            );
+            if (heirPool.length > 0) {
+              heirPool[Math.floor(Math.random() * heirPool.length)].money += heirShare;
+            } else {
+              // Наследников нет — всё в бюджет
+              this.state.governmentBudget += heirShare;
+              runningBudget = this.state.governmentBudget;
+            }
+          }
+
           // Remove from memory
           this.agents.delete(deadId);
           this.relations.delete(deadId);
@@ -2079,6 +2110,52 @@ class SimulationEngine {
       runningBudget += corpTax;
       taxRevenue += corpTax;
       this.state.totalTaxCollected += corpTax;
+
+      // ── Производительность труда: создание добавленной стоимости ─────────
+      // Каждый занятый рабочий в частном секторе генерирует небольшое количество
+      // новых денег — это моделирует добавленную стоимость, не охваченную
+      // простыми товарными транзакциями (знания, инфраструктура, опыт).
+      // Ставка 4% от базовой зарплаты ≈ 2.44/работник/день компенсирует
+      // уничтожение денег при смертях агентов (~2 200/день при 100 смертях).
+      {
+        const PROD_RATE = baseSalary * 0.04;
+        let productivityCreated = 0;
+        for (const biz of this.businesses.values()) {
+          if (PUBLIC_SECTOR_TYPES.has(biz.type)) continue; // госсектор уже дотируется
+          if (biz.employeeCount <= 0) continue;
+          const gain = biz.employeeCount * PROD_RATE;
+          biz.balance += gain;
+          productivityCreated += gain;
+        }
+        if (productivityCreated > 0) {
+          logger.debug({ productivityCreated: Math.round(productivityCreated) }, "Labor productivity value created");
+        }
+      }
+
+      // ── Центробанк: антидефляционная инъекция ────────────────────────────
+      // Если среднее богатство агентов падает ниже критического порога,
+      // правительство получает экстренное финансирование (эмиссия последней инстанции).
+      // Порог низкий — механизм срабатывает только при реальном кризисе ликвидности,
+      // а не при обычных экономических колебаниях.
+      {
+        const allAgentArr = Array.from(this.agents.values());
+        const DEFLATION_THRESHOLD = 10; // среднее богатство ниже этого → кризис
+        if (allAgentArr.length > 0) {
+          const avgWealth = allAgentArr.reduce((s, a) => s + a.money, 0) / allAgentArr.length;
+          if (avgWealth < DEFLATION_THRESHOLD) {
+            const injection = Math.min(
+              12_000, // не более 12 000 в день во избежание гиперинфляции
+              Math.round(allAgentArr.length * (DEFLATION_THRESHOLD - avgWealth) * 0.5)
+            );
+            this.state.governmentBudget += injection;
+            runningBudget = this.state.governmentBudget;
+            logger.info(
+              { injection, avgWealth: Math.round(avgWealth * 10) / 10 },
+              "Central bank emergency monetary injection"
+            );
+          }
+        }
+      }
 
       // ── Daily public service funding: actual payroll + 10% infrastructure ──
       // Government covers 100% of actual employee salaries (based on real grades)
@@ -2217,6 +2294,7 @@ class SimulationEngine {
           publicServiceSpend: Math.round(publicServiceSpend),
           pensionRecipients: dbgPensionRecipients,
           subsidyRecipients: dbgSubsidyRecipients,
+          inheritanceRecycled: Math.round(inheritanceRecycled),
         },
         market: {
           totalDemand: Math.round(totalDemand),
