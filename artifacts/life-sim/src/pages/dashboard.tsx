@@ -7,6 +7,7 @@ import {
   getGetStatsSummaryQueryKey,
   useGetStatsSummary,
 } from "@workspace/api-client-react";
+import EventFeed from "@/components/event-feed";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 import {
@@ -246,6 +247,8 @@ export default function Dashboard() {
       )}
 
       <PopulationChart running={running} />
+
+      <EventFeed currentDay={state?.gameDay ?? 0} running={running} />
 
       {chartData.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

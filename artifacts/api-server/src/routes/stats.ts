@@ -61,4 +61,8 @@ router.get("/stats/needs", (_req, res): void => {
   res.json(simulationEngine.getNeedsStats());
 });
 
+router.get("/events", (_req, res): void => {
+  res.json(simulationEngine.getEvents());
+});
+
 export default router;

@@ -379,6 +379,106 @@ export interface TickDebugReport {
   };
 }
 
+// ── Система мировых событий ──────────────────────────────────────────────────
+// Случайные события происходят раз в 5-10 дней и оказывают заметное влияние
+// на экономику, демографию и потребности жителей.
+
+type WorldEventType =
+  | "good_harvest"       // +урожай: фермы производят вдвое больше (3 дня)
+  | "bad_harvest"        // -неурожай: фермы производят вдвое меньше (3 дня)
+  | "wealthy_migration"  // мгновенно: 100 богатых мигрантов
+  | "epidemic"           // -эпидемия: здоровье тает втрое быстрее (5 дней)
+  | "economic_boom"      // +подъём: бизнесы получают ежедневный бонус (4 дня)
+  | "government_subsidy" // мгновенно: внешний грант в бюджет города
+  | "auto";              // автоматические заметные события (банкротства, волны и т.п.)
+
+interface WorldEvent {
+  id: string;
+  type: WorldEventType;
+  name: string;
+  description: string;
+  icon: string;
+  startDay: number;
+  endDay: number; // -1 для мгновенных событий
+  severity: "positive" | "negative" | "neutral";
+}
+
+interface EventLogEntry {
+  id: string;
+  day: number;
+  tick: number;
+  type: WorldEventType;
+  name: string;
+  description: string;
+  icon: string;
+  severity: "positive" | "negative" | "neutral";
+}
+
+const WORLD_EVENT_CATALOG: Array<{
+  type: Exclude<WorldEventType, "auto">;
+  name: string;
+  description: string;
+  icon: string;
+  duration: number; // -1 = мгновенно
+  weight: number;
+  severity: "positive" | "negative" | "neutral";
+}> = [
+  {
+    type: "good_harvest",
+    name: "Богатый урожай",
+    description: "Благоприятная погода дала рекордный урожай. Фермы работают на полную мощность.",
+    icon: "🌾",
+    duration: 3,
+    weight: 20,
+    severity: "positive",
+  },
+  {
+    type: "bad_harvest",
+    name: "Неурожай",
+    description: "Засуха и болезни растений подкосили урожай. Фермы производят вдвое меньше.",
+    icon: "🌵",
+    duration: 3,
+    weight: 18,
+    severity: "negative",
+  },
+  {
+    type: "wealthy_migration",
+    name: "Приток богатых мигрантов",
+    description: "100 зажиточных семей переехали в город, привезя значительные накопления.",
+    icon: "💰",
+    duration: -1,
+    weight: 12,
+    severity: "positive",
+  },
+  {
+    type: "epidemic",
+    name: "Эпидемия",
+    description: "Вспышка болезни охватила город. Здоровье жителей деградирует втрое быстрее.",
+    icon: "🦠",
+    duration: 5,
+    weight: 18,
+    severity: "negative",
+  },
+  {
+    type: "economic_boom",
+    name: "Экономический подъём",
+    description: "Торговая активность резко выросла. Все предприятия ежедневно получают дополнительный доход.",
+    icon: "📈",
+    duration: 4,
+    weight: 15,
+    severity: "positive",
+  },
+  {
+    type: "government_subsidy",
+    name: "Внешние инвестиции",
+    description: "Регион выделил городу крупный грант на развитие инфраструктуры.",
+    icon: "🏛️",
+    duration: -1,
+    weight: 17,
+    severity: "positive",
+  },
+];
+
 class SimulationEngine {
   private agents: Map<number, AgentState> = new Map();
   private businesses: Map<number, BusinessState> = new Map();
@@ -413,6 +513,9 @@ class SimulationEngine {
   private lastEmigrants = 0;
   private totalGrantsPaid = 0;
   private lastGrantsIssued = 0;
+  private activeEvents: WorldEvent[] = [];
+  private eventLog: EventLogEntry[] = [];
+  private lastEventDay = 0; // last day a world event was triggered
 
   async initialize(): Promise<void> {
     logger.info("Initializing simulation engine...");
@@ -1712,7 +1815,8 @@ class SimulationEngine {
       // Mild recovery when very well-fed and rested (eating healthy helps, but not enough alone)
       if (agent.needs.hunger > 70 && agent.needs.sleep > 70) healthDelta += 0.05;
       // Base entropy: strength=50 → -0.12/tick, strength=90 → -0.08/tick, strength=10 → -0.16/tick
-      healthDelta -= 0.15 - (agent.strength ?? 50) * 0.001;
+      // Эпидемия ускоряет деградацию здоровья в 3 раза
+      healthDelta -= (0.15 - (agent.strength ?? 50) * 0.001) * this.getEpidemicModifier();
       agent.needs.health = clamp(agent.needs.health + healthDelta);
 
       const criticalNeed = this.getCriticalNeed(agent.needs);
@@ -2185,6 +2289,111 @@ class SimulationEngine {
       }
     }
 
+    // ── Случайные мировые события ────────────────────────────────────────────
+    // Раз в ~6.7 дней происходит случайное событие (15% шанс/день).
+    // Одновременно активно не более одного долгосрочного события.
+    if (isNewDay) {
+      // Удалить истекшие и одноразовые события из active-списка
+      this.activeEvents = this.activeEvents.filter(e => e.endDay !== -1 && e.endDay >= this.state.gameDay);
+
+      const hasActiveLong = this.activeEvents.some(e => e.endDay >= this.state.gameDay);
+      const cooldown = this.state.gameDay - this.lastEventDay;
+      if (!hasActiveLong && cooldown >= 3 && Math.random() < 0.17) {
+        const totalWeight = WORLD_EVENT_CATALOG.reduce((s, e) => s + e.weight, 0);
+        let pick2 = Math.random() * totalWeight;
+        let chosen: typeof WORLD_EVENT_CATALOG[0] | undefined;
+        for (const ev of WORLD_EVENT_CATALOG) {
+          pick2 -= ev.weight;
+          if (pick2 <= 0) { chosen = ev; break; }
+        }
+        if (!chosen) chosen = WORLD_EVENT_CATALOG[0];
+
+        // Не повторять тип последнего события
+        const lastType = this.eventLog.find(e => e.type !== "auto")?.type;
+        if (chosen.type === lastType) {
+          const idx = WORLD_EVENT_CATALOG.findIndex(e => e.type === chosen!.type);
+          chosen = WORLD_EVENT_CATALOG[(idx + 1) % WORLD_EVENT_CATALOG.length];
+        }
+
+        const startDay = this.state.gameDay;
+        const endDay = chosen.duration === -1 ? -1 : startDay + chosen.duration - 1;
+        const newEvent: WorldEvent = {
+          id: `${chosen.type}-${startDay}`,
+          type: chosen.type,
+          name: chosen.name,
+          description: chosen.description,
+          icon: chosen.icon,
+          startDay,
+          endDay,
+          severity: chosen.severity,
+        };
+        if (chosen.duration !== -1) {
+          this.activeEvents.push(newEvent);
+        }
+        this.addEventLogEntry({
+          type: chosen.type,
+          name: chosen.name,
+          description: chosen.description,
+          icon: chosen.icon,
+          severity: chosen.severity,
+        });
+        this.lastEventDay = startDay;
+
+        // Мгновенные эффекты
+        if (chosen.type === "wealthy_migration") {
+          await this.spawnWealthyMigrants(100);
+          const logEntry = this.eventLog[0];
+          if (logEntry) logEntry.description = `100 зажиточных жителей переехали в город с крупными накоплениями (~${Math.round(this.config.baseSalary * 100)} монет каждый).`;
+        } else if (chosen.type === "government_subsidy") {
+          const grant = Math.round(this.agents.size * 20); // 20 монет на жителя
+          this.state.governmentBudget += grant;
+          runningBudget = this.state.governmentBudget;
+          const logEntry = this.eventLog[0];
+          if (logEntry) logEntry.description = `Регион выделил городу ${grant.toLocaleString()} монет на развитие инфраструктуры.`;
+        }
+
+        logger.info({ event: newEvent, day: startDay }, "World event triggered");
+      }
+
+      // Авто-события: заметные метрики дня
+      if (this.lastEmigrants > 80) {
+        this.addEventLogEntry({
+          type: "auto",
+          name: "Волна эмиграции",
+          description: `${this.lastEmigrants} жителей покинули город из-за низкого качества жизни.`,
+          icon: "🚪",
+          severity: "negative",
+        });
+      }
+      if (this.lastDeaths > 60) {
+        this.addEventLogEntry({
+          type: "auto",
+          name: "Высокая смертность",
+          description: `${this.lastDeaths} жителей умерли за день — критическое состояние здоровья.`,
+          icon: "💀",
+          severity: "negative",
+        });
+      }
+      if (this.lastImmigrants > 30) {
+        this.addEventLogEntry({
+          type: "auto",
+          name: "Приток мигрантов",
+          description: `${this.lastImmigrants} новых жителей прибыли в город.`,
+          icon: "🏘️",
+          severity: "positive",
+        });
+      }
+      if (this.lastBirths > 20) {
+        this.addEventLogEntry({
+          type: "auto",
+          name: "Бэби-бум",
+          description: `${this.lastBirths} детей родились сегодня — высокий уровень благополучия.`,
+          icon: "👶",
+          severity: "positive",
+        });
+      }
+    }
+
     const prevGoodPrices = new Map(Array.from(this.goods.entries()).map(([id, g]) => [id, g.currentPrice]));
     const chainResult = this.processProductionChains();
     this.updateGoodPrices();
@@ -2206,6 +2415,15 @@ class SimulationEngine {
       runningBudget += corpTax;
       taxRevenue += corpTax;
       this.state.totalTaxCollected += corpTax;
+
+      // ── Экономический подъём: ежедневный бонус к балансу потребительских бизнесов
+      if (this.isEconomicBoomActive()) {
+        for (const biz of this.businesses.values()) {
+          if (biz.type !== "food" && biz.type !== "service") continue;
+          const boom = Math.max(biz.balance * 0.12, 200);
+          biz.balance += boom;
+        }
+      }
 
       // ── Производительность труда: создание добавленной стоимости ─────────
       // Каждый занятый рабочий в частном секторе генерирует небольшое количество
@@ -2598,6 +2816,100 @@ class SimulationEngine {
     }
   }
 
+  // ── Богатые мигранты (событие wealthy_migration) ─────────────────────────
+  // Взрослые специалисты 25-55 лет, богатые (~100×baseSalary), с высоким IQ
+  private async spawnWealthyMigrants(count: number): Promise<void> {
+    if (count <= 0) return;
+    const baseSalary = this.config.baseSalary;
+    const newAgentData = [];
+    for (let i = 0; i < count; i++) {
+      const gender = Math.random() < 0.5 ? "male" : "female";
+      const name = gender === "male" ? pick(MALE_NAMES) : pick(FEMALE_NAMES);
+      newAgentData.push({
+        name, gender,
+        age: randInt(25, 55),
+        mood: rand(65, 90),
+        money: Math.round(baseSalary * rand(80, 120)),
+        personality: pick(PERSONALITIES),
+        socialization: rand(50, 90),
+        currentAction: "idle" as const,
+        employerId: null,
+        locationX: rand(0, 1000),
+        locationY: rand(0, 1000),
+        careerLevel: randInt(2, 6),
+        ambition: randInt(50, 100),
+        strength: rand(40, 90),
+        intelligence: rand(60, 95),
+      });
+    }
+    const saved = await db.insert(agentsTable).values(newAgentData).returning();
+    if (saved.length === 0) return;
+    const needsInserts = saved.map(_a => ({
+      agentId: _a.id,
+      hunger: rand(65, 90),
+      comfort: rand(60, 85),
+      social: rand(50, 80),
+      health: rand(70, 95),
+      sleep: rand(60, 85),
+      education: rand(60, 90),
+      entertainment: rand(55, 80),
+      faith: rand(45, 75),
+      housingSafety: rand(60, 85),
+      financialSafety: rand(75, 95),
+      physicalSafety: rand(70, 90),
+      socialRating: 60,
+    }));
+    const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
+    const needsMap = new Map<number, typeof savedNeeds[0]>();
+    for (const n of savedNeeds) needsMap.set(n.agentId, n);
+    for (const agent of saved) {
+      const needs = needsMap.get(agent.id);
+      if (!needs) continue;
+      this.agents.set(agent.id, {
+        ...agent,
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 80, sleep: needs.sleep ?? 75, education: needs.education ?? 75, entertainment: needs.entertainment ?? 65, faith: needs.faith ?? 60, housingSafety: needs.housingSafety ?? 70, financialSafety: needs.financialSafety ?? 80, physicalSafety: needs.physicalSafety ?? 80, socialRating: needs.socialRating ?? 60, wellbeing: needs.wellbeing ?? 70 },
+        needsId: needs.id,
+        recentActions: [],
+        jobHistory: [],
+        jobStartTick: null,
+        jailedUntilTick: null,
+      });
+    }
+    this.lastImmigrants += count; // считать как иммигранты
+  }
+
+  // ── Модификаторы активных событий ────────────────────────────────────────
+  private getHarvestModifier(): number {
+    const day = this.state.gameDay;
+    if (this.activeEvents.some(e => e.type === "good_harvest" && (e.endDay === -1 || e.endDay >= day))) return 2.0;
+    if (this.activeEvents.some(e => e.type === "bad_harvest"  && (e.endDay === -1 || e.endDay >= day))) return 0.35;
+    return 1.0;
+  }
+
+  private getEpidemicModifier(): number {
+    const day = this.state.gameDay;
+    return this.activeEvents.some(e => e.type === "epidemic" && (e.endDay === -1 || e.endDay >= day)) ? 3.0 : 1.0;
+  }
+
+  private isEconomicBoomActive(): boolean {
+    const day = this.state.gameDay;
+    return this.activeEvents.some(e => e.type === "economic_boom" && (e.endDay === -1 || e.endDay >= day));
+  }
+
+  // ── Публичный метод для API ────────────────────────────────────────────────
+  getEvents(): { active: WorldEvent[]; log: EventLogEntry[] } {
+    const day = this.state.gameDay;
+    const active = this.activeEvents.filter(e => e.endDay === -1 || e.endDay >= day);
+    return { active, log: this.eventLog.slice(0, 20) };
+  }
+
+  // ── Вспомогательный метод добавления записи в лог ─────────────────────────
+  private addEventLogEntry(entry: Omit<EventLogEntry, "id" | "day" | "tick">): void {
+    const id = `${entry.type}-${this.state.gameDay}-${this.state.tick}`;
+    this.eventLog.unshift({ id, day: this.state.gameDay, tick: this.state.tick, ...entry });
+    if (this.eventLog.length > 30) this.eventLog.pop();
+  }
+
   private getCriticalNeed(needs: { hunger: number; comfort: number; social: number; health: number; sleep: number; education: number; entertainment: number; faith: number; housingSafety: number; financialSafety: number; physicalSafety: number; socialRating: number; wellbeing: number }): string {
     // Priority 0: extreme exhaustion overrides everything — humans fall asleep standing up
     if (needs.sleep < 20) return "sleep";
@@ -2844,7 +3156,9 @@ class SimulationEngine {
         } else {
           // Healthy B2B demand: produce normally, boosted by employees.
           // Higher base production so farms can sustain frequent B2B sales.
-          const base = bizType === "farm" ? rand(12, 20) : rand(9, 16);
+          // Урожай/неурожай модифицирует производство ферм
+          const harvestMod = bizType === "farm" ? this.getHarvestModifier() : 1.0;
+          const base = bizType === "farm" ? Math.round(rand(12, 20) * harvestMod) : rand(9, 16);
           good.supply = clamp(good.supply + base + empBoost, 0, 200);
         }
         // Demand only comes from actual B2B purchases; no artificial decay here
