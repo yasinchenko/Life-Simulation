@@ -409,6 +409,8 @@ class SimulationEngine {
   private prevAvgPrice = 0;
   private lastBirths = 0;
   private lastDeaths = 0;
+  private lastImmigrants = 0;
+  private lastEmigrants = 0;
   private totalGrantsPaid = 0;
   private lastGrantsIssued = 0;
 
@@ -1205,13 +1207,53 @@ class SimulationEngine {
 
     const isNewDay = this.state.gameHour === 0;
     const dailyDeaths: number[] = [];
-    // Dynamic birth rate: high when far below popTarget, near-zero at capacity.
-    // No floor — rate approaches 0 naturally as population nears target.
-    const popTarget = this.config.initialAgents;
-    const birthRate = this.agents.size < popTarget
-      ? 0.06 * (1 - this.agents.size / popTarget)
-      : 0.0005; // практически нулевой прирост выше целевого уровня
-    const plannedBirths = isNewDay ? Math.max(2, Math.round(this.agents.size * birthRate)) : 0;
+
+    // ── Индекс экономического благосостояния ─────────────────────────────
+    // Рассчитывается один раз в начале тика; используется для рождаемости
+    // и миграции. Три компонента (0..1 каждый):
+    //   • занятость (40%)  — доля работающих среди трудоспособных (18-65)
+    //   • базовые нужды (40%) — среднее по голоду + здоровью + сну
+    //   • богатство (20%)  — среднее богатство агента, нормализованное к 40
+    //
+    // wellbeingScore = 0 (полный кризис) .. 1 (процветание)
+    const _pop = this.agents.size;
+    let _sumHunger = 0, _sumHealth = 0, _sumSleep = 0, _sumWealth = 0;
+    let _workingCount = 0, _employedCount = 0;
+    for (const a of this.agents.values()) {
+      _sumHunger += a.needs.hunger;
+      _sumHealth += a.needs.health;
+      _sumSleep  += a.needs.sleep;
+      _sumWealth += a.money;
+      if (!a.isRetired && a.age >= 18 && a.age <= 65) {
+        _workingCount++;
+        if (a.employerId != null) _employedCount++;
+      }
+    }
+    const _avgFundNeeds = _pop > 0
+      ? (_sumHunger + _sumHealth + _sumSleep) / (_pop * 3 * 100)
+      : 0.5;
+    const _empRate     = _workingCount > 0 ? _employedCount / _workingCount : 0.5;
+    const _wealthFactor = Math.min(_pop > 0 ? (_sumWealth / _pop) / 40 : 0, 1);
+    const wellbeingScore = _empRate * 0.4 + _avgFundNeeds * 0.4 + _wealthFactor * 0.2;
+
+    // ── Рождаемость привязана к благосостоянию (нет жёсткого предела) ────
+    // При кризисе (wellbeing≈0) рождаемость ≈ 0.2%/день — биологический минимум.
+    // При процветании (wellbeing≈1) — до 1.2%/день.
+    // Нет потолка по числу жителей: город растёт пока экономика справляется,
+    // и сжимается при кризисе через эмиграцию и смертность.
+    const birthRate = 0.002 + wellbeingScore * 0.01; // 0.2%..1.2%/день
+    const plannedBirths = isNewDay ? Math.max(1, Math.round(_pop * birthRate)) : 0;
+
+    // ── Иммиграция: сколько человек прибудет сегодня (если isNewDay) ─────
+    // Люди приезжают из «других городов» когда здесь лучше, чем в среднем.
+    // Порог привлекательности: wellbeing > 0.55.
+    // Поток масштабируется с ростом привлекательности, лимит 2% в день.
+    const plannedImmigrants = (isNewDay && wellbeingScore > 0.55)
+      ? Math.min(
+          Math.round(_pop * 0.02),
+          Math.round(_pop * (wellbeingScore - 0.55) * 0.05)
+        )
+      : 0;
 
     // ── Daily productivity investments ─────────────────────────────────────────
     // Profitable commercial businesses (food/service/retail) auto-invest when
@@ -2087,6 +2129,60 @@ class SimulationEngine {
       } else if (isNewDay) {
         this.lastBirths = 0;
       }
+
+      // ── Эмиграция: агенты покидают город при неудовлетворённых нуждах ──
+      // Проверяется после удаления умерших (те уже вычищены из this.agents).
+      // Два уровня ухода:
+      //   • критические нужды (голод < 25 или здоровье < 25): сильный стимул — 4%/день
+      //   • высшие нужды (финансы < 30 или комфорт < 30): слабый стимул — 1%/день
+      // При глубоком кризисе (wellbeing < 0.35) шанс умножается до 2.4×.
+      // Уехавшие агенты забирают деньги с собой (деньги покидают экономику).
+      if (isNewDay) {
+        const emigrantIds: number[] = [];
+        for (const [aId, a] of this.agents) {
+          const criticalNeeds = a.needs.hunger < 25 || a.needs.health < 25;
+          const higherNeeds   = !criticalNeeds && (
+            a.needs.financialSafety < 30 || a.needs.comfort < 30 || a.needs.social < 25
+          );
+          let emigChance = criticalNeeds ? 0.04 : higherNeeds ? 0.01 : 0;
+          if (emigChance > 0 && wellbeingScore < 0.35) {
+            emigChance *= 1 + (0.35 - wellbeingScore) * 4; // до 2.4× при кризисе
+          }
+          if (emigChance > 0 && Math.random() < emigChance) {
+            emigrantIds.push(aId);
+          }
+        }
+        if (emigrantIds.length > 0) {
+          for (const eId of emigrantIds) {
+            const ea = this.agents.get(eId);
+            if (!ea) continue;
+            if (ea.employerId) {
+              const biz = this.businesses.get(ea.employerId);
+              if (biz) biz.employeeCount = Math.max(0, biz.employeeCount - 1);
+            }
+            this.agents.delete(eId);
+            this.relations.delete(eId);
+            for (const relMap of this.relations.values()) relMap.delete(eId);
+          }
+          this.lastEmigrants = emigrantIds.length;
+          await this.purgeDeadAgents(emigrantIds);
+          logger.info({ count: emigrantIds.length, population: this.agents.size, wellbeingScore: Math.round(wellbeingScore * 100) / 100 }, "Agents emigrated");
+        } else {
+          this.lastEmigrants = 0;
+        }
+      }
+
+      // ── Иммиграция: приток людей при благоприятных условиях ─────────────
+      // Иммигранты — взрослые 20-45 лет с некоторыми сбережениями.
+      // Они ищут работу сами (employerId = null при прибытии).
+      // Деньги иммигрантов — новые деньги из «других городов» (вливание в экономику).
+      if (plannedImmigrants > 0) {
+        this.lastImmigrants = plannedImmigrants;
+        await this.spawnImmigrants(plannedImmigrants);
+        logger.info({ count: plannedImmigrants, population: this.agents.size, wellbeingScore: Math.round(wellbeingScore * 100) / 100 }, "Agents immigrated");
+      } else if (isNewDay) {
+        this.lastImmigrants = 0;
+      }
     }
 
     const prevGoodPrices = new Map(Array.from(this.goods.entries()).map(([id, g]) => [id, g.currentPrice]));
@@ -2439,6 +2535,66 @@ class SimulationEngine {
         const biz = this.businesses.get(agent.employerId);
         if (biz) biz.employeeCount++;
       }
+    }
+  }
+
+  // ── Иммигранты: взрослые 20-45 лет, приезжают без работы, с накоплениями ─
+  // Деньги иммигрантов — вливание из «другого города» (новые деньги в экономике).
+  private async spawnImmigrants(count: number): Promise<void> {
+    if (count <= 0) return;
+    const newAgentData = [];
+    for (let i = 0; i < count; i++) {
+      const gender = Math.random() < 0.5 ? "male" : "female";
+      const name = gender === "male" ? pick(MALE_NAMES) : pick(FEMALE_NAMES);
+      newAgentData.push({
+        name, gender,
+        age: randInt(20, 45),
+        mood: rand(40, 70),       // тревожные, но с надеждой
+        money: rand(30, 150),     // накопления на переезд
+        personality: pick(PERSONALITIES),
+        socialization: rand(20, 60),
+        currentAction: "idle" as const,
+        employerId: null,         // ищут работу с нуля
+        locationX: rand(0, 1000),
+        locationY: rand(0, 1000),
+        careerLevel: 1,
+        ambition: randInt(40, 100), // мотивация выше среднего — едут за лучшей жизнью
+        strength: rand(30, 90),
+        intelligence: rand(30, 90),
+      });
+    }
+    const saved = await db.insert(agentsTable).values(newAgentData).returning();
+    if (saved.length === 0) return;
+    const needsInserts = saved.map(_a => ({
+      agentId: _a.id,
+      hunger: rand(50, 80),       // в дороге немного устали
+      comfort: rand(40, 70),
+      social: rand(30, 60),       // оторваны от прежних связей
+      health: rand(60, 90),
+      sleep: rand(50, 80),
+      education: rand(50, 80),
+      entertainment: rand(40, 70),
+      faith: rand(40, 70),
+      housingSafety: rand(40, 70), // пока без жилья
+      financialSafety: rand(50, 80),
+      physicalSafety: rand(60, 90),
+      socialRating: 50,
+    }));
+    const savedNeeds = await db.insert(needsTable).values(needsInserts).returning();
+    const needsMap = new Map<number, typeof savedNeeds[0]>();
+    for (const n of savedNeeds) needsMap.set(n.agentId, n);
+    for (const agent of saved) {
+      const needs = needsMap.get(agent.id);
+      if (!needs) continue;
+      this.agents.set(agent.id, {
+        ...agent,
+        needs: { hunger: needs.hunger, comfort: needs.comfort, social: needs.social, health: needs.health ?? 75, sleep: needs.sleep ?? 70, education: needs.education ?? 70, entertainment: needs.entertainment ?? 60, faith: needs.faith ?? 60, housingSafety: needs.housingSafety ?? 60, financialSafety: needs.financialSafety ?? 70, physicalSafety: needs.physicalSafety ?? 75, socialRating: needs.socialRating ?? 50, wellbeing: needs.wellbeing ?? 65 },
+        needsId: needs.id,
+        recentActions: [],
+        jobHistory: [],
+        jobStartTick: null,
+        jailedUntilTick: null,
+      });
     }
   }
 
@@ -3632,6 +3788,8 @@ class SimulationEngine {
         mostPopularGood: null,
         birthsLastTick: this.lastBirths,
         deathsLastTick: this.lastDeaths,
+        immigrantsLastTick: this.lastImmigrants,
+        emigrantsLastTick: this.lastEmigrants,
         profitableBusinesses,
         unprofitableBusinesses,
         marketBalance: Math.round(marketBalance),
@@ -3663,6 +3821,8 @@ class SimulationEngine {
       mostPopularGood: goodsSorted[0]?.name ?? null,
       birthsLastTick: this.lastBirths,
       deathsLastTick: this.lastDeaths,
+      immigrantsLastTick: this.lastImmigrants,
+      emigrantsLastTick: this.lastEmigrants,
       profitableBusinesses,
       unprofitableBusinesses,
       marketBalance: Math.round(marketBalance),

@@ -11,7 +11,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 
 import {
   Users, TrendingUp, AlertTriangle, Coins, Heart, Clock, Landmark, Settings,
-  Baby, Building2, Package, Briefcase, Moon, ShieldPlus,
+  Baby, Building2, Package, Briefcase, Moon, ShieldPlus, ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import StatCard from "@/components/stat-card";
@@ -160,7 +160,7 @@ export default function Dashboard() {
             <SummaryMetric
               icon={Baby}
               label="Рождаемость"
-              sublabel="баланс за последний день"
+              sublabel="родилось / умерло за день"
               value={`+${summary.birthsLastTick} / −${summary.deathsLastTick}`}
               delta={summary.birthsLastTick - summary.deathsLastTick}
               deltaLabel={
@@ -169,6 +169,19 @@ export default function Dashboard() {
                   : `${summary.birthsLastTick - summary.deathsLastTick} чел.`
               }
               positive={summary.birthsLastTick >= summary.deathsLastTick}
+            />
+            <SummaryMetric
+              icon={ArrowRightLeft}
+              label="Миграция"
+              sublabel="прибыло / уехало за день"
+              value={`+${summary.immigrantsLastTick ?? 0} / −${summary.emigrantsLastTick ?? 0}`}
+              delta={(summary.immigrantsLastTick ?? 0) - (summary.emigrantsLastTick ?? 0)}
+              deltaLabel={
+                (summary.immigrantsLastTick ?? 0) - (summary.emigrantsLastTick ?? 0) >= 0
+                  ? `+${(summary.immigrantsLastTick ?? 0) - (summary.emigrantsLastTick ?? 0)} чел.`
+                  : `${(summary.immigrantsLastTick ?? 0) - (summary.emigrantsLastTick ?? 0)} чел.`
+              }
+              positive={(summary.immigrantsLastTick ?? 0) >= (summary.emigrantsLastTick ?? 0)}
             />
             <SummaryMetric
               icon={Building2}

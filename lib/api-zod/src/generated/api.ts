@@ -334,6 +334,8 @@ export const GetStatsSummaryResponse = zod.object({
   "gdp": zod.number(),
   "birthsLastTick": zod.number(),
   "deathsLastTick": zod.number(),
+  "immigrantsLastTick": zod.number(),
+  "emigrantsLastTick": zod.number(),
   "profitableBusinesses": zod.number(),
   "unprofitableBusinesses": zod.number(),
   "marketBalance": zod.number(),
